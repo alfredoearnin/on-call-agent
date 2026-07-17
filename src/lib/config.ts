@@ -100,7 +100,8 @@ export function getConfig(): AppConfig {
       apiBase: `https://api.${site}`,
       appBase: `https://app.${site}`,
       apiKey: str("DD_API_KEY", ""),
-      appKey: str("DD_APP_KEY", ""),
+      // Accept DD_APP_KEY or the Datadog-style DD_APPLICATION_KEY.
+      appKey: str("DD_APP_KEY", "") || str("DD_APPLICATION_KEY", ""),
       appKeyWrite: str("DD_APP_KEY_WRITE", ""),
     },
     incidentio: {
