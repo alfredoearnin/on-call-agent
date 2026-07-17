@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { priorityTone, fmtDateTime } from "@/lib/format";
+import { priorityTone, fmtDateTime, fmtDate } from "@/lib/format";
 import { FiringKind } from "@/lib/constants";
 
 interface AlertLike {
@@ -40,8 +40,14 @@ export function AlertCard({ alert, tz }: { alert: AlertLike; tz: string }) {
         {alert.monitor?.service && <span>svc: {alert.monitor.service}</span>}
         {alert.env && <span>env: {alert.env}</span>}
         {alert.cluster && <span>cluster: {alert.cluster}</span>}
-        <span>fired: {fmtDateTime(alert.firedAt, tz)}</span>
-        {alert.resolvedAt && <span>resolved: {fmtDateTime(alert.resolvedAt, tz)}</span>}
+        {isStale ? (
+          <span>firing since {fmtDate(alert.firedAt, tz)} (not fired this week)</span>
+        ) : (
+          <span>fired: {fmtDateTime(alert.firedAt, tz)}</span>
+        )}
+        {alert.resolvedAt && !isStale && (
+          <span>resolved: {fmtDateTime(alert.resolvedAt, tz)}</span>
+        )}
         {alert.ackedBy && <span>acked by: {alert.ackedBy}</span>}
       </div>
 

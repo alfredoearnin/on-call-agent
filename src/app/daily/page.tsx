@@ -116,8 +116,8 @@ export default async function DailyPage({
       />
       {data.other.length > 0 && (
         <Section
-          title="Other alerts (firing / carryover)"
-          subtitle="Still firing or unclassified"
+          title="Carryover — still-firing incident.io alerts"
+          subtitle="Open from prior weeks · did NOT fire this week · need a manual clear"
           alerts={data.other}
           tz={tz}
           empty=""
