@@ -24,6 +24,8 @@ function int(key: string, fallback: number): number {
 
 export interface AppConfig {
   demoMode: boolean;
+  /** "auto" | "confluence" | "demo" | "live". auto = confluence files, else demo/live. */
+  syncSource: string;
   team: {
     tag: string;
     label: string;
@@ -52,6 +54,10 @@ export interface AppConfig {
     apiToken: string;
     vulnFilterId: string;
   };
+  confluence: {
+    spaceKey: string;
+    titlePrefix: string;
+  };
   apply: {
     enabled: boolean;
     operator: string;
@@ -76,6 +82,7 @@ export function getConfig(): AppConfig {
   const site = str("DD_SITE", "datadoghq.com");
   return {
     demoMode: bool("DEMO_MODE", true),
+    syncSource: str("SYNC_SOURCE", "auto").toLowerCase(),
     team: {
       tag: str("TEAM_TAG", "team:l2-peng-growth"),
       label: str("TEAM_LABEL", "Growth Team"),
@@ -114,6 +121,18 @@ export function getConfig(): AppConfig {
       apiToken: str("JIRA_API_TOKEN", ""),
       vulnFilterId: str("JIRA_VULN_FILTER_ID", "15295"),
     },
+    confluence: {
+      // On-call names are parsed from the weekly handoff page the on-call agent
+      // publishes (uses the same Atlassian credentials as Jira).
+      spaceKey: str(
+        "CONFLUENCE_SPACE_KEY",
+        "~712020cb7ebe6a714e411e98574e2fb19d5faa",
+      ),
+      titlePrefix: str(
+        "CONFLUENCE_HANDOFF_TITLE_PREFIX",
+        "Growth Team Ops Review — Weekly Handoff",
+      ),
+    },
     apply: {
       enabled: bool("APPLY_ENABLED", false),
       operator: str("OPERATOR_NAME", "local-operator"),
@@ -146,6 +165,11 @@ export function hasIncidentIo(cfg: AppConfig): boolean {
 /** True when Jira vulnerability lookups are configured. */
 export function hasJira(cfg: AppConfig): boolean {
   return Boolean(cfg.jira.email && cfg.jira.apiToken);
+}
+
+/** Confluence (on-call names) reuses the same Atlassian credentials as Jira. */
+export function hasConfluence(cfg: AppConfig): boolean {
+  return hasJira(cfg);
 }
 
 /** True when the guarded apply write path is fully enabled. */

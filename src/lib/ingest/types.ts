@@ -114,6 +114,20 @@ export interface NormalizedSchedule {
   nextSecondary?: string;
 }
 
+/** Pre-computed KPI numbers (e.g. parsed from the Confluence summary). When
+ * present, persistBundle uses these instead of computing from the alert set. */
+export interface KpiOverride {
+  totalAlerts: number;
+  highAlerts: number;
+  lowAlerts: number;
+  humanAttention: number;
+  autoResolved: number;
+  escalationNum: number;
+  escalationDen: number;
+  activeFiring: number;
+  staleFiring: number;
+}
+
 export interface IngestBundle {
   monitors: NormalizedMonitor[];
   alerts: NormalizedAlert[];
@@ -121,6 +135,7 @@ export interface IngestBundle {
   recommendations: NormalizedRecommendation[];
   vuln?: NormalizedVuln;
   schedule?: NormalizedSchedule;
+  kpis?: KpiOverride;
   sourceStatus: {
     datadog: SourceStatus;
     incidentio: SourceStatus;

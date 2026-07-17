@@ -304,21 +304,25 @@ export async function persistBundle(
   }
 
   // --- KPIs ------------------------------------------------------------------
+  // Prefer authoritative numbers from the source (e.g. Confluence summary);
+  // otherwise derive them from the ingested alert set.
+  const o = bundle.kpis;
   const windowAlerts = bundle.alerts.filter((a) => a.firedAt >= window.start);
-  const totalAlerts = windowAlerts.length;
-  const highAlerts = windowAlerts.filter((a) => a.priority === "High").length;
-  const humanAttention = windowAlerts.filter(
-    (a) => a.disposition === "required_human_attention",
-  ).length;
-  const autoResolved = windowAlerts.filter(
-    (a) => a.disposition === "auto_resolved",
-  ).length;
-  const activeFiring = bundle.alerts.filter(
-    (a) => a.firingKind === FiringKind.Active,
-  ).length;
-  const staleFiring = bundle.alerts.filter(
-    (a) => a.firingKind === FiringKind.Stale,
-  ).length;
+  const totalAlerts = o?.totalAlerts ?? windowAlerts.length;
+  const highAlerts =
+    o?.highAlerts ?? windowAlerts.filter((a) => a.priority === "High").length;
+  const humanAttention =
+    o?.humanAttention ??
+    windowAlerts.filter((a) => a.disposition === "required_human_attention").length;
+  const autoResolved =
+    o?.autoResolved ??
+    windowAlerts.filter((a) => a.disposition === "auto_resolved").length;
+  const activeFiring =
+    o?.activeFiring ??
+    bundle.alerts.filter((a) => a.firingKind === FiringKind.Active).length;
+  const staleFiring =
+    o?.staleFiring ??
+    bundle.alerts.filter((a) => a.firingKind === FiringKind.Stale).length;
   const incidentsCount = bundle.incidents.length;
   const runRateWeekly = Math.round((totalAlerts / window.daysElapsed) * 7);
 
@@ -342,12 +346,12 @@ export async function persistBundle(
   const kpis: KpiSummary = {
     totalAlerts,
     highAlerts,
-    lowAlerts: totalAlerts - highAlerts,
+    lowAlerts: o?.lowAlerts ?? totalAlerts - highAlerts,
     humanAttention,
     autoResolved,
     incidentsCount,
-    escalationRateNum: incidentsCount,
-    escalationRateDen: totalAlerts,
+    escalationRateNum: o?.escalationNum ?? incidentsCount,
+    escalationRateDen: o?.escalationDen ?? totalAlerts,
     activeFiring,
     staleFiring,
     runRateWeekly,

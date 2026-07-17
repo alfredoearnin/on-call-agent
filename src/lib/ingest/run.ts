@@ -11,6 +11,10 @@ import { DatadogClient } from "@/lib/clients/datadog";
 import { resolveWindow, toEpochSeconds } from "@/lib/ingest/window";
 import { buildDemoBundle } from "@/lib/ingest/sources/demo";
 import { buildLiveBundle } from "@/lib/ingest/sources/live";
+import {
+  buildConfluenceBundle,
+  hasConfluenceFiles,
+} from "@/lib/ingest/sources/confluence";
 import { classifyRecommendations } from "@/lib/ingest/tuning";
 import { persistBundle } from "@/lib/ingest/persist";
 import { reconcileFeedback } from "@/lib/ingest/feedback";
@@ -91,9 +95,21 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
   });
 
   try {
-    // --- Build the bundle ---------------------------------------------------
+    // --- Resolve source + build the bundle ----------------------------------
+    let source = cfg.syncSource;
+    if (source === "auto") {
+      source = hasConfluenceFiles()
+        ? "confluence"
+        : cfg.demoMode
+          ? "demo"
+          : "live";
+    }
+
     let bundle: IngestBundle;
-    if (cfg.demoMode) {
+    if (source === "confluence") {
+      // Token-free: parse the on-call agent's Confluence pages (memory in SQLite).
+      bundle = buildConfluenceBundle(now);
+    } else if (source === "demo") {
       bundle = buildDemoBundle(now);
     } else {
       bundle = await buildLiveBundle(cfg, window);
@@ -110,8 +126,10 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
     }
 
     // --- Persist + feedback -------------------------------------------------
+    // Only live mode owns monitor config; other sources must not clobber it
+    // (preserves applied changes across syncs).
     const result = await persistBundle(bundle, window, run.id, {
-      preserveExistingConfig: cfg.demoMode,
+      preserveExistingConfig: source !== "live",
     });
     const feedback = await reconcileFeedback();
 
