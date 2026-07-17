@@ -8,11 +8,11 @@ import {
   type SyncTrigger as Trigger,
 } from "@/lib/constants";
 import { DatadogClient } from "@/lib/clients/datadog";
-import { resolveWindow, toEpochSeconds } from "@/lib/ingest/window";
+import { resolveWindow, toEpochSeconds, type OpsWindow } from "@/lib/ingest/window";
 import { buildDemoBundle } from "@/lib/ingest/sources/demo";
 import { buildLiveBundle } from "@/lib/ingest/sources/live";
 import {
-  buildConfluenceBundle,
+  buildConfluenceBundles,
   hasConfluenceFiles,
 } from "@/lib/ingest/sources/confluence";
 import { classifyRecommendations } from "@/lib/ingest/tuning";
@@ -42,6 +42,28 @@ export async function ensureSyncSettings() {
     create: { id: "singleton" },
     update: {},
   });
+}
+
+/** OpsWindow for a bundle's parsed handoff window (falls back to the run window). */
+function windowForBundle(
+  b: { window?: { start: Date; end: Date } },
+  fallback: OpsWindow,
+  now: Date,
+): OpsWindow {
+  if (!b.window) return fallback;
+  const start = b.window.start;
+  const days = Math.max(
+    0.04,
+    Math.min(7, (now.getTime() - start.getTime()) / 86_400_000),
+  );
+  return {
+    start,
+    end: b.window.end,
+    priorStart: new Date(start.getTime() - 7 * 86_400_000),
+    priorEnd: start,
+    daysElapsed: days,
+    timezone: fallback.timezone,
+  };
 }
 
 /** Minimal "next daily run" from a `m h * * *` cron; falls back to +1 day. */
@@ -105,40 +127,49 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
           : "live";
     }
 
-    let bundle: IngestBundle;
+    // Build the (bundle, window) list to persist. Confluence yields one per week.
+    const items: { bundle: IngestBundle; win: OpsWindow }[] = [];
     if (source === "confluence") {
-      // Token-free: parse the on-call agent's Confluence pages (memory in SQLite).
-      bundle = buildConfluenceBundle(now);
+      for (const b of buildConfluenceBundles(now)) {
+        items.push({ bundle: b, win: windowForBundle(b, window, now) });
+      }
     } else if (source === "demo") {
-      bundle = buildDemoBundle(now);
+      items.push({ bundle: buildDemoBundle(now), win: window });
     } else {
-      bundle = await buildLiveBundle(cfg, window);
-      // Live mode computes recommendations from observed signals.
+      const b = await buildLiveBundle(cfg, window);
       const dd = hasDatadogRead(cfg) ? new DatadogClient(cfg) : undefined;
-      bundle.recommendations = await classifyRecommendations(
-        bundle.monitors,
-        bundle.alerts,
+      b.recommendations = await classifyRecommendations(
+        b.monitors,
+        b.alerts,
         cfg,
         dd,
         toEpochSeconds(window.priorStart),
         toEpochSeconds(window.end),
       );
+      items.push({ bundle: b, win: window });
     }
 
-    // --- Persist + feedback -------------------------------------------------
-    // Only live mode owns monitor config; other sources must not clobber it
-    // (preserves applied changes across syncs).
-    const result = await persistBundle(bundle, window, run.id, {
-      preserveExistingConfig: source !== "live",
-    });
+    // --- Persist (one per week) + feedback ----------------------------------
+    // Only live mode owns monitor config; other sources must not clobber it.
+    let result: Awaited<ReturnType<typeof persistBundle>> | undefined;
+    for (const { bundle, win } of items) {
+      result = await persistBundle(bundle, win, run.id, {
+        preserveExistingConfig: source !== "live",
+      });
+    }
     const feedback = await reconcileFeedback();
 
-    const anyUnavailable = Object.values(bundle.sourceStatus).includes(
+    const newest = items[items.length - 1].bundle;
+    const anyUnavailable = Object.values(newest.sourceStatus).includes(
       SourceStatus.Unavailable,
     );
     const status = anyUnavailable ? RunStatus.Partial : RunStatus.Success;
 
-    const notesParts = [bundle.notes].filter(Boolean) as string[];
+    const notesParts = [
+      source === "confluence"
+        ? `Confluence: ${items.length} week(s)`
+        : newest.notes,
+    ].filter(Boolean) as string[];
     notesParts.push(
       `feedback: ${feedback.applied} applied / ${feedback.validated} validated / ${feedback.regressed} regressed`,
     );
@@ -148,15 +179,17 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
       data: {
         finishedAt: new Date(),
         status,
-        datadogStatus: bundle.sourceStatus.datadog,
-        incidentioStatus: bundle.sourceStatus.incidentio,
-        jiraStatus: bundle.sourceStatus.jira,
+        windowStart: newest.window?.start ?? window.start,
+        windowEnd: newest.window?.end ?? window.end,
+        datadogStatus: newest.sourceStatus.datadog,
+        incidentioStatus: newest.sourceStatus.incidentio,
+        jiraStatus: newest.sourceStatus.jira,
         notes: notesParts.join(" | "),
-        primaryOnCall: bundle.schedule?.primary,
-        secondaryOnCall: bundle.schedule?.secondary,
-        nextPrimaryOnCall: bundle.schedule?.nextPrimary,
-        nextSecondaryOnCall: bundle.schedule?.nextSecondary,
-        ...result.kpis,
+        primaryOnCall: newest.schedule?.primary,
+        secondaryOnCall: newest.schedule?.secondary,
+        nextPrimaryOnCall: newest.schedule?.nextPrimary,
+        nextSecondaryOnCall: newest.schedule?.nextSecondary,
+        ...(result?.kpis ?? {}),
       },
     });
 
@@ -175,7 +208,7 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
       },
     });
 
-    return { ok: true, runId: run.id, status, kpis: result.kpis };
+    return { ok: true, runId: run.id, status, kpis: result?.kpis };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.ingestionRun.update({

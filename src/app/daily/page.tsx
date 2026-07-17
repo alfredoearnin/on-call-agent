@@ -1,5 +1,5 @@
 import { getConfig } from "@/lib/config";
-import { getDailyData, getSyncSettings } from "@/lib/queries";
+import { getDailyView, getSyncSettings } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCard } from "@/components/alert-card";
 import { DayPicker } from "@/components/day-picker";
@@ -12,13 +12,13 @@ export const dynamic = "force-dynamic";
 export default async function DailyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ day?: string }>;
+  searchParams: Promise<{ week?: string; day?: string }>;
 }) {
-  const { day: dayParam } = await searchParams;
+  const { week: weekParam, day: dayParam } = await searchParams;
   const cfg = getConfig();
   const [settings, data] = await Promise.all([
     getSyncSettings(),
-    getDailyData(dayParam),
+    getDailyView(weekParam, dayParam),
   ]);
   const tz = settings?.timezone ?? cfg.team.timezone;
 
@@ -40,10 +40,15 @@ export default async function DailyPage({
         <div>
           <h1 className="text-xl font-semibold">Daily incidents & alerts</h1>
           <p className="text-sm text-muted-foreground">
-            {totalAlerts} alert(s) · {data.incidents.length} incident(s) on {data.day}
+            {totalAlerts} alert(s) · {data.incidents.length} incident(s) on{" "}
+            {data.selectedDay}
           </p>
         </div>
-        <DayPicker days={data.days} selected={data.day} />
+        <DayPicker
+          weeks={data.weeks}
+          selectedWeek={data.selectedWeek}
+          selectedDay={data.selectedDay}
+        />
       </header>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

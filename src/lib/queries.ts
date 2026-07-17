@@ -68,13 +68,21 @@ export async function getActivityDays(): Promise<string[]> {
   return [...set];
 }
 
-export interface DailyData {
-  day: string;
+export interface WeekOption {
+  start: string;
+  end: string;
+  label: string;
+  days: string[];
+}
+
+export interface DailyView {
+  weeks: WeekOption[];
+  selectedWeek: string;
+  selectedDay: string;
   requiredHumanAttention: Awaited<ReturnType<typeof fetchAlertsForDay>>;
   autoResolved: Awaited<ReturnType<typeof fetchAlertsForDay>>;
   other: Awaited<ReturnType<typeof fetchAlertsForDay>>;
   incidents: Awaited<ReturnType<typeof fetchIncidentsForDay>>;
-  days: string[];
 }
 
 async function fetchAlertsForDay(dayISO: string) {
@@ -98,25 +106,98 @@ async function fetchIncidentsForDay(dayISO: string) {
   });
 }
 
-export async function getDailyData(dayISO?: string): Promise<DailyData> {
-  const days = await getActivityDays();
+/**
+ * Weeks come from the handoff window each alert was tagged with (weekStart),
+ * so navigation matches the Confluence pages — not scattered by alert fire dates.
+ * Within a week: "new fires" (non-stale, fired inside the window) are day-filterable;
+ * stale carryover alerts are always shown.
+ */
+export async function getDailyView(
+  weekISO?: string,
+  dayISO?: string,
+): Promise<DailyView> {
   const tz = getConfig().team.timezone;
-  const day = dayISO ?? days[0] ?? (DateTime.now().setZone(tz).toISODate() as string);
 
-  const alerts = await fetchAlertsForDay(day);
-  const incidents = await fetchIncidentsForDay(day);
+  const idx = await prisma.alertFire.findMany({
+    where: { weekStart: { not: null } },
+    select: { weekStart: true, weekEnd: true, firedAt: true, firingKind: true },
+  });
+
+  interface Wk {
+    startDate: Date;
+    endDate: Date;
+    days: Set<string>;
+  }
+  const byWeek = new Map<string, Wk>();
+  for (const a of idx) {
+    if (!a.weekStart) continue;
+    const id = dayKey(a.weekStart, tz);
+    let wk = byWeek.get(id);
+    if (!wk) {
+      const endDate =
+        a.weekEnd ?? new Date(a.weekStart.getTime() + 7 * 86_400_000);
+      wk = { startDate: a.weekStart, endDate, days: new Set() };
+      byWeek.set(id, wk);
+    }
+    const within = a.firedAt >= wk.startDate && a.firedAt < wk.endDate;
+    if (a.firingKind !== FiringKind.Stale && within) {
+      wk.days.add(dayKey(a.firedAt, tz));
+    }
+  }
+
+  const weeks: WeekOption[] = [...byWeek.entries()]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .map(([id, wk]) => ({
+      start: id,
+      end: dayKey(wk.endDate, tz),
+      label: `${DateTime.fromJSDate(wk.startDate, { zone: tz }).toFormat("MMM d")} – ${DateTime.fromJSDate(wk.endDate, { zone: tz }).toFormat("MMM d")}`,
+      days: [...wk.days].sort().reverse(),
+    }));
+
+  let selectedWeek = weekISO && byWeek.has(weekISO) ? weekISO : weeks[0]?.start;
+  if (!selectedWeek) {
+    selectedWeek = dayKey(DateTime.now().setZone(tz).toJSDate(), tz);
+    weeks.unshift({ start: selectedWeek, end: selectedWeek, label: "This week", days: [] });
+  }
+
+  const wk = byWeek.get(selectedWeek);
+  const dayOptions = weeks.find((w) => w.start === selectedWeek)?.days ?? [];
+  const selectedDay =
+    (dayISO && dayOptions.includes(dayISO) ? dayISO : dayOptions[0]) ??
+    selectedWeek;
+
+  const weekAlerts = wk
+    ? await prisma.alertFire.findMany({
+        where: { weekStart: wk.startDate },
+        orderBy: { firedAt: "desc" },
+        include: { monitor: true },
+      })
+    : [];
+  const incidents = wk
+    ? await prisma.incident.findMany({
+        where: { weekStart: wk.startDate },
+        orderBy: { openedAt: "desc" },
+      })
+    : [];
+
+  const newFires = weekAlerts.filter((a) => a.firingKind !== FiringKind.Stale);
+  const carryover = weekAlerts.filter((a) => a.firingKind === FiringKind.Stale);
+  const dayFires = dayOptions.includes(selectedDay)
+    ? newFires.filter((a) => dayKey(a.firedAt, tz) === selectedDay)
+    : newFires;
 
   return {
-    day,
-    requiredHumanAttention: alerts.filter(
+    weeks,
+    selectedWeek,
+    selectedDay,
+    requiredHumanAttention: dayFires.filter(
       (a) => a.disposition === AlertDisposition.RequiredHumanAttention,
     ),
-    autoResolved: alerts.filter(
+    autoResolved: dayFires.filter(
       (a) => a.disposition === AlertDisposition.AutoResolved,
     ),
-    other: alerts.filter((a) => !a.disposition),
+    other: carryover,
     incidents,
-    days,
   };
 }
 

@@ -92,6 +92,23 @@ function parseTable(body: string): string[][] {
   return rows.length > 1 ? rows.slice(1) : rows;
 }
 
+// ── Week window (Tue -> Tue) ────────────────────────────────────────────────
+
+export function parseWindow(
+  md: string,
+  tz: string,
+): { start: Date; end: Date } | undefined {
+  const m =
+    /on-call week[^\n]*?(\d{4}-\d{2}-\d{2})[^\n]*?(?:→|->)[^\n]*?(\d{4}-\d{2}-\d{2})/i.exec(
+      md,
+    );
+  if (!m) return undefined;
+  const start = DateTime.fromISO(m[1], { zone: tz }).startOf("day");
+  const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
+  if (!start.isValid || !end.isValid) return undefined;
+  return { start: start.toJSDate(), end: end.toJSDate() };
+}
+
 // ── On-call schedule ────────────────────────────────────────────────────────
 
 export function parseOnCall(md: string): NormalizedSchedule | undefined {
@@ -355,6 +372,7 @@ export function parseConfluence(
   now: Date = new Date(),
 ): IngestBundle {
   const tz = getConfig().team.timezone;
+  const window = parseWindow(handoffMd, tz);
   const schedule = parseOnCall(handoffMd);
   const kpis = parseKpis(handoffMd);
   const recommendations = parseRecommendations(handoffMd);
@@ -374,6 +392,7 @@ export function parseConfluence(
     vuln,
     schedule,
     kpis: kpis ?? undefined,
+    window,
     sourceStatus: {
       datadog: SourceStatus.Skipped,
       incidentio: SourceStatus.Skipped,

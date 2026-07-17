@@ -2,27 +2,62 @@
 
 import { useRouter } from "next/navigation";
 
-export function DayPicker({
-  days,
-  selected,
-}: {
+interface WeekOption {
+  start: string;
+  label: string;
   days: string[];
-  selected: string;
+}
+
+export function DayPicker({
+  weeks,
+  selectedWeek,
+  selectedDay,
+}: {
+  weeks: WeekOption[];
+  selectedWeek: string;
+  selectedDay: string;
 }) {
   const router = useRouter();
-  const options = days.includes(selected) ? days : [selected, ...days];
+  const days = weeks.find((w) => w.start === selectedWeek)?.days ?? [];
 
   return (
-    <select
-      value={selected}
-      onChange={(e) => router.push(`/daily?day=${e.target.value}`)}
-      className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:border-ring"
-    >
-      {options.map((d) => (
-        <option key={d} value={d}>
-          {d}
-        </option>
-      ))}
-    </select>
+    <div className="flex items-center gap-2">
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        Week
+        <select
+          value={selectedWeek}
+          onChange={(e) => router.push(`/daily?week=${e.target.value}`)}
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring"
+        >
+          {weeks.map((w) => (
+            <option key={w.start} value={w.start}>
+              {w.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        Day
+        <select
+          value={selectedDay}
+          onChange={(e) =>
+            router.push(`/daily?week=${selectedWeek}&day=${e.target.value}`)
+          }
+          disabled={days.length === 0}
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring disabled:opacity-50"
+        >
+          {days.length === 0 ? (
+            <option value={selectedDay}>{selectedDay}</option>
+          ) : (
+            days.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))
+          )}
+        </select>
+      </label>
+    </div>
   );
 }

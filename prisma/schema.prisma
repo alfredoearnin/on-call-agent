@@ -128,10 +128,14 @@ model AlertFire {
   redacted         Boolean   @default(false)
   firstRunId       String?
   lastRunId        String?
+  // The on-call week (handoff window) this alert was reported in.
+  weekStart        DateTime?
+  weekEnd          DateTime?
 
   @@index([firedAt])
   @@index([monitorId])
   @@index([status])
+  @@index([weekStart])
 }
 
 /// An incident (incident.io). Split into production-customer-impact vs operational.
@@ -146,8 +150,11 @@ model Incident {
   resolvedAt     DateTime?
   url            String?
   redacted       Boolean   @default(false)
+  weekStart      DateTime?
+  weekEnd        DateTime?
 
   @@index([openedAt])
+  @@index([weekStart])
 }
 
 /// The persistent tuning ledger row (on-call.md memory). Never deleted.

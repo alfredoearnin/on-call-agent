@@ -15,24 +15,27 @@ export function hasConfluenceFiles(): boolean {
 }
 
 /**
- * Token-free source: parse the on-call agent's Confluence markdown files that
- * the cloud automation (or a local run) drops into data/confluence/. Uses
- * handoff.md if present, else the newest non-ledger .md file.
+ * Token-free source: parse ALL of the on-call agent's weekly handoff markdown
+ * files that the cloud automation (or a local run) drops into data/confluence/.
+ * Each handoff page = one on-call week. Returns one bundle per week, sorted
+ * oldest -> newest (by parsed window, else filename).
  */
-export function buildConfluenceBundle(now: Date = new Date()): IngestBundle {
+export function buildConfluenceBundles(now: Date = new Date()): IngestBundle[] {
   if (!existsSync(DIR)) {
     throw new Error(`Confluence dir not found: ${DIR}`);
   }
-  let file = join(DIR, "handoff.md");
-  if (!existsSync(file)) {
-    const candidates = readdirSync(DIR)
-      .filter((f) => f.endsWith(".md") && !/ledger/i.test(f))
-      .sort();
-    if (candidates.length === 0) {
-      throw new Error(`No handoff markdown in ${DIR}`);
-    }
-    file = join(DIR, candidates[candidates.length - 1]);
+  const files = readdirSync(DIR)
+    .filter((f) => f.endsWith(".md") && !/ledger/i.test(f))
+    .sort();
+  if (files.length === 0) {
+    throw new Error(`No handoff markdown in ${DIR}`);
   }
-  const md = readFileSync(file, "utf8");
-  return parseConfluence(md, now);
+  const bundles = files.map((f) =>
+    parseConfluence(readFileSync(join(DIR, f), "utf8"), now),
+  );
+  return bundles.sort((a, b) => {
+    const as = a.window?.start?.getTime() ?? 0;
+    const bs = b.window?.start?.getTime() ?? 0;
+    return as - bs;
+  });
 }

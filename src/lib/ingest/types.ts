@@ -136,6 +136,8 @@ export interface IngestBundle {
   vuln?: NormalizedVuln;
   schedule?: NormalizedSchedule;
   kpis?: KpiOverride;
+  /** The on-call week window this bundle reports (e.g. from a handoff page). */
+  window?: { start: Date; end: Date };
   sourceStatus: {
     datadog: SourceStatus;
     incidentio: SourceStatus;

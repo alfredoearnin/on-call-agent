@@ -67,6 +67,8 @@ export async function persistBundle(
 ): Promise<PersistResult> {
   const now = new Date();
   const monitorIds = new Set(bundle.monitors.map((m) => m.id));
+  const weekStart = bundle.window?.start ?? null;
+  const weekEnd = bundle.window?.end ?? null;
 
   // --- Monitors + per-run config snapshot -----------------------------------
   // In demo mode the DB is the source of truth for config, so applied changes
@@ -171,6 +173,8 @@ export async function persistBundle(
         redacted,
         firstRunId: runId,
         lastRunId: runId,
+        weekStart,
+        weekEnd,
       },
       update: {
         monitorId,
@@ -185,6 +189,8 @@ export async function persistBundle(
         finding: findingR.value,
         redacted,
         lastRunId: runId,
+        weekStart,
+        weekEnd,
       },
     });
   }
@@ -205,6 +211,8 @@ export async function persistBundle(
         resolvedAt: inc.resolvedAt,
         url: inc.url,
         redacted: titleR.redacted,
+        weekStart,
+        weekEnd,
       },
       update: {
         title: titleR.value,
@@ -213,6 +221,8 @@ export async function persistBundle(
         status: inc.status,
         resolvedAt: inc.resolvedAt,
         redacted: titleR.redacted,
+        weekStart,
+        weekEnd,
       },
     });
   }
