@@ -23,6 +23,19 @@ export async function getRuns(limit = 20) {
   });
 }
 
+/** Summary of the data source + freshness for the Settings page. */
+export async function getSourceSummary() {
+  const [latest, weekRows] = await Promise.all([
+    getLatestRun(),
+    prisma.alertFire.findMany({
+      where: { weekStart: { not: null } },
+      select: { weekStart: true },
+      distinct: ["weekStart"],
+    }),
+  ]);
+  return { weeksIngested: weekRows.length, latest };
+}
+
 /** Trend series (oldest -> newest) for the Overview charts. */
 export async function getTrendSeries(limit = 30) {
   const runs = await prisma.ingestionRun.findMany({

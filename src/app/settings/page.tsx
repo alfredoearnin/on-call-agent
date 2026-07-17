@@ -1,11 +1,9 @@
 import { getConfig, canApply } from "@/lib/config";
-import { getSyncSettings, getRuns } from "@/lib/queries";
-import { ensureSyncSettings } from "@/lib/ingest/run";
+import { getRuns, getSourceSummary } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { SettingsForm } from "@/components/settings-form";
 import { SyncNowButton } from "@/components/sync-now-button";
-import { fmtDateTime } from "@/lib/format";
+import { fmtDateTime, fmtDate, timeAgo } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -16,106 +14,100 @@ function runTone(status: string): "ok" | "warn" | "alert" | "neutral" {
   return "neutral";
 }
 
-function sourceTone(status: string): "ok" | "warn" | "alert" | "neutral" {
-  if (status === "ok") return "ok";
-  if (status === "unavailable") return "alert";
-  return "neutral";
-}
-
 export default async function SettingsPage() {
-  await ensureSyncSettings();
   const cfg = getConfig();
-  const [settings, runs] = await Promise.all([getSyncSettings(), getRuns(15)]);
-  const tz = settings?.timezone ?? cfg.team.timezone;
-  const latest = runs[0];
+  const [{ weeksIngested, latest }, runs] = await Promise.all([
+    getSourceSummary(),
+    getRuns(15),
+  ]);
+  const tz = cfg.team.timezone;
+
+  const sourceLabel = cfg.demoMode
+    ? "Demo (bundled sample data)"
+    : cfg.syncSource === "live"
+      ? "Live (Datadog + incident.io)"
+      : "Confluence (on-call agent handoff pages)";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Sync control center — choose manual or automatic, run on demand, and
-          review history and source health.
+          Where the dashboard&apos;s data comes from, how it stays fresh, and the
+          apply write-path status.
         </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle>Data source</CardTitle>
+            <Badge tone="primary">
+              {cfg.demoMode ? "demo" : cfg.syncSource === "live" ? "live" : "confluence"}
+            </Badge>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <Row label="Source">{sourceLabel}</Row>
+            <Row label="Weeks ingested">{weeksIngested}</Row>
+            <Row label="Latest week">
+              {latest?.windowStart
+                ? `${fmtDate(latest.windowStart, tz)} → ${fmtDate(latest.windowEnd, tz)}`
+                : "—"}
+            </Row>
+            <Row label="Last synced">{timeAgo(latest?.startedAt)}</Row>
+            <p className="pt-1 text-xs text-muted-foreground">
+              Datadog is used <strong>only</strong> for the Apply write path — not
+              as a data source. No incident.io / Jira credentials are needed here.
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Apply (Datadog write)</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <Row label="Status">
+              <Badge tone={canApply(cfg) ? "info" : "neutral"}>
+                {canApply(cfg) ? "enabled" : "disabled"}
+              </Badge>
+            </Row>
+            <p className="text-xs text-muted-foreground">
+              The one guarded write path. Gated by <code>APPLY_ENABLED</code> +
+              <code> DD_APP_KEY_WRITE</code>; used only from the Apply button on a
+              recommendation. Everything else is read-only.
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Daily sync</CardTitle>
+          <CardTitle>How data refreshes</CardTitle>
           <SyncNowButton />
         </CardHeader>
-        <CardContent>
-          <SettingsForm
-            mode={settings?.mode ?? "manual"}
-            scheduleCron={settings?.scheduleCron ?? "0 8 * * *"}
-            timezone={tz}
-            enabled={settings?.enabled ?? false}
-          />
+        <CardContent className="space-y-3 text-sm text-muted-foreground">
+          <p>
+            The <strong>cloud automation</strong> (&quot;On-call dashboard daily
+            sync&quot;) reads the on-call agent&apos;s Confluence pages once a day,
+            writes them into the committed SQLite memory, and pushes to{" "}
+            <code>main</code>. To see the latest data locally, pull the repo:
+          </p>
+          <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 text-xs">
+            git pull
+          </pre>
+          <p>
+            <strong>Sync now</strong> (above) re-parses the Confluence markdown
+            already in <code>data/confluence/</code> into SQLite — useful after you
+            edit those files locally. It does not fetch from Confluence (the front
+            holds no credentials).
+          </p>
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Source health (latest run)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {latest ? (
-              <>
-                <Row label="Datadog">
-                  <Badge tone={sourceTone(latest.datadogStatus)}>
-                    {latest.datadogStatus}
-                  </Badge>
-                </Row>
-                <Row label="incident.io">
-                  <Badge tone={sourceTone(latest.incidentioStatus)}>
-                    {latest.incidentioStatus}
-                  </Badge>
-                </Row>
-                <Row label="Jira">
-                  <Badge tone={sourceTone(latest.jiraStatus)}>
-                    {latest.jiraStatus}
-                  </Badge>
-                </Row>
-                <Row label="Apply (Datadog write)">
-                  <Badge tone={canApply(cfg) ? "info" : "neutral"}>
-                    {canApply(cfg) ? "enabled" : "disabled"}
-                  </Badge>
-                </Row>
-                <Row label="Mode">
-                  <Badge tone={cfg.demoMode ? "warn" : "ok"}>
-                    {cfg.demoMode ? "demo (sample data)" : "live"}
-                  </Badge>
-                </Row>
-              </>
-            ) : (
-              <p className="text-muted-foreground">No runs yet.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>Automatic sync (worker)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              Start the in-app worker to run on the schedule above:
-            </p>
-            <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 text-xs">
-              npm run scheduler
-            </pre>
-            <p>Or set-and-forget via OS cron (no long-lived process):</p>
-            <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 text-xs">
-              {`0 8 * * *  cd ${process.cwd()} && npm run ingest`}
-            </pre>
-          </CardContent>
-        </Card>
-      </div>
-
       <Card>
         <CardHeader>
-          <CardTitle>Run history</CardTitle>
+          <CardTitle>Sync history</CardTitle>
         </CardHeader>
         <CardContent>
           {runs.length === 0 ? (
@@ -164,7 +156,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex items-center justify-between">
       <span className="text-muted-foreground">{label}</span>
-      {children}
+      <span>{children}</span>
     </div>
   );
 }
