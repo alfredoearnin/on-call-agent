@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+/*
+ * Semantic design tokens -> Tailwind utilities (bg-background, text-foreground,
+ * border-border, etc.). Dark, modern ops-dashboard palette.
+ */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-alert: var(--alert);
+  --color-info: var(--info);
+  --color-neutral: var(--neutral);
+
+  --radius-lg: 0.75rem;
+  --radius-md: 0.5rem;
+  --radius-sm: 0.375rem;
+}
+
+/* Light theme (default). The .dark class (set by the theme script) overrides. */
+:root {
+  color-scheme: light;
+  --background: #f6f7f9;
+  --foreground: #0b0e14;
+  --card: #ffffff;
+  --card-foreground: #0b0e14;
+  --muted: #eef1f5;
+  --muted-foreground: #5b6675;
+  --border: #e3e7ee;
+  --input: #e3e7ee;
+  --ring: #2f6fed;
+  --primary: #2f6fed;
+  --primary-foreground: #ffffff;
+
+  /* Status colors (aligned to on-call.md lozenges), tuned for light bg */
+  --ok: #059669;
+  --warn: #b45309;
+  --alert: #dc2626;
+  --info: #2563eb;
+  --neutral: #64748b;
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0b0e14;
+  --foreground: #e6e9ef;
+  --card: #12161f;
+  --card-foreground: #e6e9ef;
+  --muted: #1a2030;
+  --muted-foreground: #9aa4b2;
+  --border: #232b3a;
+  --input: #232b3a;
+  --ring: #4f8cff;
+  --primary: #4f8cff;
+  --primary-foreground: #06122b;
+
+  --ok: #34d399; /* green - OK / validated */
+  --warn: #fbbf24; /* amber - warn / recommend */
+  --alert: #f87171; /* red - alert / strongly-recommend / regressed */
+  --info: #60a5fa; /* blue - low / applied */
+  --neutral: #94a3b8; /* grey - proposed / no data */
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica,
+    Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin scrollbars for a tidy dashboard feel */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

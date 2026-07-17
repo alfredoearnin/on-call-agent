@@ -1,0 +1,240 @@
+// On-call Ops Dashboard — "memory" schema.
+//
+// Portability: SQLite now, committed to the repo as shared memory. All status/
+// priority fields are String (+ app-level constants in src/lib/constants.ts),
+// NOT Prisma enums, so this schema runs unchanged on Postgres later. Moving to
+// Postgres = change `provider` below + `prisma migrate deploy`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// One sync run = one daily snapshot. Holds the denormalized KPI series that
+/// powers the Overview trend charts, plus per-source status for graceful
+/// degradation, and doubles as the sync run history.
+model IngestionRun {
+  id          String    @id @default(cuid())
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  windowStart DateTime
+  windowEnd   DateTime
+  daysElapsed Float     @default(0)
+  mode        String    @default("manual") // SyncMode
+  trigger     String    @default("manual_cli") // SyncTrigger
+  status      String    @default("running") // RunStatus
+
+  // Per-source availability (SourceStatus)
+  datadogStatus    String @default("skipped")
+  incidentioStatus String @default("skipped")
+  jiraStatus       String @default("skipped")
+
+  // Denormalized KPI summary (for fast dashboard reads + trend charts)
+  totalAlerts       Int    @default(0)
+  highAlerts        Int    @default(0)
+  lowAlerts         Int    @default(0)
+  humanAttention    Int    @default(0)
+  autoResolved      Int    @default(0)
+  incidentsCount    Int    @default(0)
+  escalationRateNum Int    @default(0)
+  escalationRateDen Int    @default(0)
+  activeFiring      Int    @default(0)
+  staleFiring       Int    @default(0)
+  runRateWeekly     Float?
+  priorWeekTotal    Int?
+  trend             String?
+
+  // On-call schedule snapshot (from incident.io schedules)
+  primaryOnCall       String?
+  secondaryOnCall     String?
+  nextPrimaryOnCall   String?
+  nextSecondaryOnCall String?
+
+  error String?
+  notes String?
+
+  @@index([startedAt])
+  @@index([windowStart])
+}
+
+/// A Datadog monitor. id = the Datadog monitor id (stable natural key).
+model Monitor {
+  id           String    @id
+  name         String
+  service      String?
+  priority     String    @default("Low") // Priority
+  tags         String? // JSON array
+  currentState String    @default("Unknown") // MonitorState
+  query        String?
+  message      String? // routing/notify text (redacted)
+  configHash   String?
+  datadogUrl   String?
+  envScope     String?
+  cluster      String?
+  modifiedAt   DateTime?
+  firstSeenAt  DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+
+  alerts          AlertFire[]
+  snapshots       MonitorConfigSnapshot[]
+  recommendations TuningRecommendation[]
+  appliedChanges  AppliedChange[]
+
+  @@index([service])
+}
+
+/// Per-run capture of a monitor's config, enabling the feedback-loop diff.
+model MonitorConfigSnapshot {
+  id         String   @id @default(cuid())
+  monitorId  String
+  monitor    Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  runId      String?
+  capturedAt DateTime @default(now())
+  query      String?
+  message    String?
+  priority   String?
+  thresholds String? // JSON
+  options    String? // JSON
+  hash       String
+
+  @@index([monitorId, capturedAt])
+}
+
+/// A distinct alert firing occurrence. id = incident.io alert id (ULID) or a
+/// synthetic id for Datadog-only fires. Upserted by id => idempotent per day.
+model AlertFire {
+  id               String    @id
+  monitorId        String?
+  monitor          Monitor?  @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  source           String    @default("incident.io")
+  title            String // redacted
+  priority         String    @default("Low") // Priority
+  status           String    @default("firing") // firing/resolved
+  disposition      String? // AlertDisposition
+  firingKind       String? // FiringKind (active/stale/resolved)
+  firedAt          DateTime
+  resolvedAt       DateTime?
+  ackedBy          String?
+  ackLatencySec    Int?
+  escalationStatus String?
+  env              String?
+  cluster          String?
+  timesFired       Int       @default(1)
+  finding          String? // agent finding (redacted)
+  redacted         Boolean   @default(false)
+  firstRunId       String?
+  lastRunId        String?
+
+  @@index([firedAt])
+  @@index([monitorId])
+  @@index([status])
+}
+
+/// An incident (incident.io). Split into production-customer-impact vs operational.
+model Incident {
+  id             String    @id
+  title          String // redacted
+  severity       String?
+  classification String    @default("operational") // IncidentClass
+  service        String?
+  status         String?
+  openedAt       DateTime
+  resolvedAt     DateTime?
+  url            String?
+  redacted       Boolean   @default(false)
+
+  @@index([openedAt])
+}
+
+/// The persistent tuning ledger row (on-call.md memory). Never deleted.
+model TuningRecommendation {
+  id                String    @id @default(cuid())
+  monitorId         String?
+  monitor           Monitor?  @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  monitorKey        String // stable key even when monitorId is null
+  monitorName       String
+  service           String?
+  issueType         String // IssueType
+  title             String
+  before            String
+  after             String
+  changeSummary     String
+  coveragePreserved String?
+  expectedImpact    String?
+  evidence          String? // JSON/text
+  confidence        String    @default("low") // Confidence
+  status            String    @default("proposed") // RecommendationStatus
+  outcome           String?
+  firstSeen         DateTime  @default(now())
+  weeksSeen         Int       @default(1)
+  firesThisWeek     Int       @default(0)
+  autoResolvedPct   Int?
+  nightPages        Int       @default(0)
+  lastFiredAt       DateTime?
+  lastUpdated       DateTime  @default(now())
+  // Structured patch hint for the apply feature (JSON): the field(s) to change
+  // per dev/prod branch.
+  patchJson         String?
+
+  appliedChanges AppliedChange[]
+
+  @@unique([monitorKey, issueType])
+  @@index([status])
+}
+
+/// Vulnerability counts over time (Jira filter). Optional source.
+model VulnerabilitySnapshot {
+  id         String   @id @default(cuid())
+  capturedAt DateTime @default(now())
+  runId      String?
+  total      Int      @default(0)
+  critical   Int      @default(0)
+  high       Int      @default(0)
+  scope      String?
+  source     String?
+
+  @@index([capturedAt])
+}
+
+/// Singleton settings that drive the daily sync mechanism + Settings page.
+model SyncSettings {
+  id            String    @id @default("singleton")
+  mode          String    @default("manual") // SyncMode
+  scheduleCron  String    @default("0 8 * * *")
+  timezone      String    @default("America/Los_Angeles")
+  enabled       Boolean   @default(false)
+  lastRunAt     DateTime?
+  lastRunStatus String?
+  lastRunId     String?
+  nextRunAt     DateTime?
+  updatedAt     DateTime  @updatedAt
+}
+
+/// Audit + rollback trail for the guarded "Apply suggestion" write path.
+/// Never deleted.
+model AppliedChange {
+  id               String    @id @default(cuid())
+  monitorId        String?
+  monitor          Monitor?  @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  recommendationId String?
+  recommendation   TuningRecommendation? @relation(fields: [recommendationId], references: [id], onDelete: SetNull)
+  targetScope      String // TargetScope (prod/dev)
+  changeSummary    String
+  beforeJson       String // full prior config for rollback
+  afterJson        String
+  diffJson         String?
+  operator         String
+  status           String    @default("applied") // AppliedChangeStatus
+  datadogResponse  String?
+  error            String?
+  appliedAt        DateTime  @default(now())
+  revertedAt       DateTime?
+  revertsId        String? // id of the AppliedChange this reverts, if any
+
+  @@index([monitorId])
+  @@index([appliedAt])
+}
