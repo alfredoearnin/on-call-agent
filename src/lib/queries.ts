@@ -39,6 +39,15 @@ export async function getLatestVuln() {
   });
 }
 
+/** All still-firing carryover alerts (stale), longest-firing first. */
+export async function getCarryoverAlerts() {
+  return prisma.alertFire.findMany({
+    where: { firingKind: FiringKind.Stale },
+    orderBy: { firedAt: "asc" },
+    include: { monitor: true },
+  });
+}
+
 export async function getActiveAndStaleAlerts() {
   const [active, stale] = await Promise.all([
     prisma.alertFire.findMany({

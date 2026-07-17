@@ -115,13 +115,13 @@ export default async function DailyPage({
         empty="No alerts auto-resolved this day."
       />
       {data.other.length > 0 && (
-        <Section
-          title="Carryover — still-firing incident.io alerts"
-          subtitle="Open from prior weeks · did NOT fire this week · need a manual clear"
-          alerts={data.other}
-          tz={tz}
-          empty=""
-        />
+        <p className="text-xs text-muted-foreground">
+          {data.other.length} carryover alert(s) open from prior weeks —{" "}
+          <a href="/carryover" className="text-primary hover:underline">
+            see Carryover
+          </a>
+          .
+        </p>
       )}
     </div>
   );

@@ -8,12 +8,14 @@ import {
   Wrench,
   Settings,
   Activity,
+  Flame,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/daily", label: "Daily", icon: CalendarDays },
+  { href: "/carryover", label: "Carryover", icon: Flame },
   { href: "/recommendations", label: "Recommendations", icon: Wrench },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
