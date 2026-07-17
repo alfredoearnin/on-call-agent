@@ -1,0 +1,4 @@
+{
+  "name": "On-call dashboard",
+  "install": "npm install && npx prisma generate"
+}
