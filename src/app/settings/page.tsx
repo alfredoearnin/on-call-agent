@@ -1,8 +1,9 @@
-import { getConfig, canApply } from "@/lib/config";
+import { getConfig, canApply, canRefreshFromSource } from "@/lib/config";
 import { getRuns, getSourceSummary } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SyncNowButton } from "@/components/sync-now-button";
+import { RefreshSourceButton } from "@/components/refresh-source-button";
 import { fmtDateTime, fmtDate, timeAgo } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -82,25 +83,30 @@ export default async function SettingsPage() {
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>How data refreshes</CardTitle>
-          <SyncNowButton />
+          <div className="flex items-center gap-2">
+            <RefreshSourceButton configured={canRefreshFromSource(cfg)} />
+            <SyncNowButton />
+          </div>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-muted-foreground">
           <p>
-            The <strong>cloud automation</strong> (&quot;On-call dashboard daily
-            sync&quot;) reads the on-call agent&apos;s Confluence pages once a day,
-            writes them into the committed SQLite memory, and pushes to{" "}
-            <code>main</code>. To see the latest data locally, pull the repo:
+            <strong>Refresh from source</strong> triggers the cloud Health Check
+            agent (regenerates the Confluence pages) and chains the daily sync. It
+            runs asynchronously (a few minutes); when it finishes it pushes the
+            updated memory to <code>main</code> — then pull it locally:
           </p>
           <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 text-xs">
             git pull
           </pre>
           <p>
-            <strong>Sync now</strong> (above) re-parses the Confluence markdown
-            already in <code>data/confluence/</code> into SQLite — useful after you
-            edit those files locally. It does not fetch from Confluence (the front
-            holds no credentials).
+            The same refresh also runs automatically on the daily schedule.
+          </p>
+          <p>
+            <strong>Sync now</strong> re-parses the Confluence markdown already in{" "}
+            <code>data/confluence/</code> into SQLite — useful after editing those
+            files locally; it does not fetch from Confluence.
           </p>
         </CardContent>
       </Card>

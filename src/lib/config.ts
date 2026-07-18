@@ -62,6 +62,11 @@ export interface AppConfig {
     enabled: boolean;
     operator: string;
   };
+  /** Optional webhook to trigger the cloud Health Check agent on demand. */
+  refresh: {
+    webhookUrl: string;
+    webhookSecret: string;
+  };
   cronSecret: string;
   /** Noise/tuning thresholds (on-call.md lines 76-88). */
   thresholds: {
@@ -137,6 +142,10 @@ export function getConfig(): AppConfig {
       enabled: bool("APPLY_ENABLED", false),
       operator: str("OPERATOR_NAME", "local-operator"),
     },
+    refresh: {
+      webhookUrl: str("HEALTHCHECK_WEBHOOK_URL", ""),
+      webhookSecret: str("HEALTHCHECK_WEBHOOK_SECRET", ""),
+    },
     cronSecret: str("CRON_SECRET", ""),
     thresholds: {
       noiseMinFiresPerWeek: int("NOISE_MIN_FIRES_PER_WEEK", 3),
@@ -175,4 +184,9 @@ export function hasConfluence(cfg: AppConfig): boolean {
 /** True when the guarded apply write path is fully enabled. */
 export function canApply(cfg: AppConfig): boolean {
   return cfg.apply.enabled && Boolean(cfg.datadog.appKeyWrite);
+}
+
+/** True when the "Refresh from source" webhook is configured. */
+export function canRefreshFromSource(cfg: AppConfig): boolean {
+  return Boolean(cfg.refresh.webhookUrl);
 }
