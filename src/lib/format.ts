@@ -76,6 +76,11 @@ export function fmtDate(d: Date | string | null | undefined, tz: string): string
   return DateTime.fromJSDate(new Date(d), { zone: tz }).toFormat("MMM d, yyyy");
 }
 
+export function fmtTime(d: Date | string | null | undefined, tz: string): string {
+  if (!d) return "—";
+  return DateTime.fromJSDate(new Date(d), { zone: tz }).toFormat("h:mm a");
+}
+
 export function timeAgo(d: Date | string | null | undefined): string {
   if (!d) return "never";
   const rel = DateTime.fromJSDate(new Date(d)).toRelative();

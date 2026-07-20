@@ -1,20 +1,23 @@
+import Link from "next/link";
 import { getConfig } from "@/lib/config";
 import { getDailyView, getSyncSettings } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertCard } from "@/components/alert-card";
+import { AlertTimeline } from "@/components/alert-timeline";
 import { DayPicker } from "@/components/day-picker";
 import { Badge } from "@/components/ui/badge";
 import { IncidentClass } from "@/lib/constants";
 import { fmtDateTime } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
 export default async function DailyPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string; day?: string }>;
+  searchParams: Promise<{ week?: string; day?: string; view?: string }>;
 }) {
-  const { week: weekParam, day: dayParam } = await searchParams;
+  const { week: weekParam, day: dayParam, view: viewParam } = await searchParams;
   const cfg = getConfig();
   const [settings, data] = await Promise.all([
     getSyncSettings(),
@@ -36,6 +39,14 @@ export default async function DailyPage({
     data.weeks.find((w) => w.start === data.selectedWeek)?.label ??
     data.selectedWeek;
   const scope = isAllWeek ? "week" : "day";
+  const view = viewParam === "timeline" ? "timeline" : "list";
+  const timelineAlerts = [...data.requiredHumanAttention, ...data.autoResolved];
+
+  const tabHref = (v: string) => {
+    const p = new URLSearchParams({ week: data.selectedWeek, day: data.selectedDay });
+    if (v !== "list") p.set("view", v);
+    return `/daily?${p.toString()}`;
+  };
 
   return (
     <div className="space-y-6">
@@ -49,11 +60,37 @@ export default async function DailyPage({
             {isAllWeek ? `· week ${weekLabel}` : `on ${data.selectedDay}`}
           </p>
         </div>
-        <DayPicker
-          weeks={data.weeks}
-          selectedWeek={data.selectedWeek}
-          selectedDay={data.selectedDay}
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex rounded-md border border-input p-0.5 text-xs">
+            <Link
+              href={tabHref("list")}
+              className={cn(
+                "rounded px-2.5 py-1",
+                view === "list"
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              List
+            </Link>
+            <Link
+              href={tabHref("timeline")}
+              className={cn(
+                "rounded px-2.5 py-1",
+                view === "timeline"
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Timeline
+            </Link>
+          </div>
+          <DayPicker
+            weeks={data.weeks}
+            selectedWeek={data.selectedWeek}
+            selectedDay={data.selectedDay}
+          />
+        </div>
       </header>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
@@ -105,20 +142,36 @@ export default async function DailyPage({
         </Card>
       </div>
 
-      <Section
-        title="Required human attention"
-        subtitle="Acknowledged by on-call"
-        alerts={data.requiredHumanAttention}
-        tz={tz}
-        empty={`No alerts required human attention this ${scope}.`}
-      />
-      <Section
-        title="Auto-resolved"
-        subtitle="Escalation cancelled / no human ack"
-        alerts={data.autoResolved}
-        tz={tz}
-        empty={`No alerts auto-resolved this ${scope}.`}
-      />
+      {view === "timeline" ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Timeline</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              By day, newest first · amber = human attention, green = auto-resolved
+            </p>
+          </CardHeader>
+          <CardContent>
+            <AlertTimeline alerts={timelineAlerts} tz={tz} />
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <Section
+            title="Required human attention"
+            subtitle="Acknowledged by on-call"
+            alerts={data.requiredHumanAttention}
+            tz={tz}
+            empty={`No alerts required human attention this ${scope}.`}
+          />
+          <Section
+            title="Auto-resolved"
+            subtitle="Escalation cancelled / no human ack"
+            alerts={data.autoResolved}
+            tz={tz}
+            empty={`No alerts auto-resolved this ${scope}.`}
+          />
+        </>
+      )}
       {data.other.length > 0 && (
         <p className="text-xs text-muted-foreground">
           {data.other.length} carryover alert(s) open from prior weeks —{" "}
