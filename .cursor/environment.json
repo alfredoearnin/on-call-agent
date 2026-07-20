@@ -1,4 +1,4 @@
 {
   "name": "On-call dashboard",
-  "install": "npm install && npx prisma generate"
+  "install": "test -f .env || printf 'DATABASE_URL=\"file:./oncall.db\"\\n' > .env; npm install && npx prisma generate"
 }
