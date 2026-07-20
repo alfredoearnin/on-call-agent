@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/kpi-card";
 import { TrendChart } from "@/components/trend-chart";
+import { OnCallBanner } from "@/components/on-call-banner";
 import { fmtDate, fmtDateTime, statusTone, statusLabel, trendArrow } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -48,24 +49,23 @@ export default async function OverviewPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Overview</h1>
-          <p className="text-sm text-muted-foreground">
-            On-call week {fmtDate(run.windowStart, tz)} → {fmtDate(run.windowEnd, tz)} ·
-            week-to-date · refreshed {fmtDateTime(run.startedAt, tz)}
-          </p>
-        </div>
-        <div className="text-right text-sm">
-          <div className="text-muted-foreground">On-call</div>
-          <div>
-            <span className="font-medium">{run.primaryOnCall ?? "—"}</span>
-            {run.secondaryOnCall ? (
-              <span className="text-muted-foreground"> · {run.secondaryOnCall}</span>
-            ) : null}
-          </div>
-        </div>
+      <header>
+        <h1 className="text-xl font-semibold">Overview</h1>
+        <p className="text-sm text-muted-foreground">
+          On-call week {fmtDate(run.windowStart, tz)} → {fmtDate(run.windowEnd, tz)} ·
+          week-to-date · refreshed {fmtDateTime(run.startedAt, tz)}
+        </p>
       </header>
+
+      <OnCallBanner
+        primary={run.primaryOnCall}
+        secondary={run.secondaryOnCall}
+        nextPrimary={run.nextPrimaryOnCall}
+        nextSecondary={run.nextSecondaryOnCall}
+        windowStart={run.windowStart}
+        windowEnd={run.windowEnd}
+        tz={tz}
+      />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <KpiCard
