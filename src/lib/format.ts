@@ -81,6 +81,36 @@ export function fmtTime(d: Date | string | null | undefined, tz: string): string
   return DateTime.fromJSDate(new Date(d), { zone: tz }).toFormat("h:mm a");
 }
 
+/**
+ * Split an alert/incident "Agent Finding" into a skimmable TL;DR and the
+ * detailed "What happened". The on-call agent emits `TL;DR: … What happened: …`;
+ * when those labels are absent (older reports) we derive a one-line summary from
+ * the first clause so the UI stays consistent.
+ */
+export function splitFinding(finding: string | null | undefined): {
+  tldr: string | null;
+  detail: string | null;
+} {
+  if (!finding) return { tldr: null, detail: null };
+  const text = finding.trim();
+  if (!text) return { tldr: null, detail: null };
+
+  if (/tl;?dr:/i.test(text)) {
+    const afterTldr = text.replace(/^.*?tl;?dr:\s*/i, "");
+    const [tldrPart, ...rest] = afterTldr.split(/\s*what happened:\s*/i);
+    const detail = rest.join(" ").trim();
+    return { tldr: tldrPart.trim() || null, detail: detail || null };
+  }
+
+  // Fallback: first sentence/clause as the summary, full text as the detail.
+  const clauses = text.split(/(?<=[.;])\s+/);
+  const first = (clauses[0] ?? text).replace(/^observed:\s*/i, "").trim();
+  const truncate = (s: string) =>
+    s.length > 200 ? `${s.slice(0, 200).trim()}…` : s;
+  if (clauses.length <= 1) return { tldr: truncate(text), detail: null };
+  return { tldr: truncate(first), detail: text };
+}
+
 export function timeAgo(d: Date | string | null | undefined): string {
   if (!d) return "never";
   const rel = DateTime.fromJSDate(new Date(d)).toRelative();

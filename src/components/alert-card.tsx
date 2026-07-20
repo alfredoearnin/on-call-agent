@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
-import { priorityTone, fmtDateTime, fmtDate } from "@/lib/format";
+import { priorityTone, fmtDateTime, fmtDate, splitFinding } from "@/lib/format";
 import { FiringKind } from "@/lib/constants";
 
 interface AlertLike {
@@ -22,6 +22,7 @@ interface AlertLike {
 
 export function AlertCard({ alert, tz }: { alert: AlertLike; tz: string }) {
   const isStale = alert.firingKind === FiringKind.Stale;
+  const { tldr, detail } = splitFinding(alert.finding);
   return (
     <div className="rounded-md border border-border bg-background/40 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -51,10 +52,26 @@ export function AlertCard({ alert, tz }: { alert: AlertLike; tz: string }) {
         {alert.ackedBy && <span>acked by: {alert.ackedBy}</span>}
       </div>
 
-      {alert.finding && (
-        <p className="mt-2 text-xs leading-relaxed text-foreground/80">
-          {alert.finding}
-        </p>
+      {(tldr || detail) && (
+        <div className="mt-2 space-y-1">
+          {tldr && (
+            <p className="text-xs leading-relaxed text-foreground">
+              <span className="font-semibold text-muted-foreground">
+                TL;DR:{" "}
+              </span>
+              {tldr}
+            </p>
+          )}
+          {detail && (
+            <details className="group text-xs">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-primary hover:underline [&::-webkit-details-marker]:hidden">
+                <span className="group-open:hidden">Show what happened ▸</span>
+                <span className="hidden group-open:inline">Hide details ▾</span>
+              </summary>
+              <p className="mt-1 leading-relaxed text-foreground/80">{detail}</p>
+            </details>
+          )}
+        </div>
       )}
 
       <div className="mt-2 flex gap-3 text-xs">

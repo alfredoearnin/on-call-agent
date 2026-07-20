@@ -1,5 +1,11 @@
 # Growth Team Ops Review — Weekly Handoff Agent (Confluence edition)
 
+> **Version:** 2026-07-20 (per-item TL;DR). Changes vs prior: every alert **Agent Finding** and
+> every **incident** now leads with a one-sentence **TL;DR** followed by a **What happened** detail
+> block, so the handoff (and the dashboard that parses it) can show a skim summary plus an
+> expandable explanation. Keep the `TL;DR:` and `What happened:` labels literally — downstream
+> tooling splits on them.
+>
 > **Version:** 2026-07-13 (learning tuning recommendations). Changes vs prior: added a
 > persistent **Monitor Tuning Ledger** (cross-run memory), a **tuning recommendation engine**
 > that proposes concrete monitor changes (query / threshold / routing / deprecation) grounded in
@@ -230,13 +236,19 @@ instead of resetting each run:
   (`status: [firing, resolved]`), dedup by monitor.
 - Per fired monitor: current status (`search_datadog_monitors id:<n>` → OK/Alert/Warn/No Data);
   times fired (`aggregate_events`); service; **priority (High/Low)** and urgency.
-- **Agent Finding — separate fact from inference, and do not invent a cause:**
-  - State **Observed** facts directly from the payload (what fired, when, trigger level, who acked
-    via `escalation_show`, ack latency, whether promoted via `incident_show`).
-  - Give a **Likely cause** only when `alert_show`/`incident_show` actually supports one; hedge it
-    (`likely …`) and name the basis. If the signals do not support a clear cause, write
-    **"Cause not determined from available signals."** Never fabricate a plausible-sounding
-    narrative.
+- **Agent Finding — lead with a TL;DR, then the detail; separate fact from inference, and do not
+  invent a cause.** Structure every finding as two labeled parts (keep the labels literally —
+  the dashboard splits on `TL;DR:` and `What happened:`):
+  - **TL;DR:** one plain-language sentence a skimming reader grasps in ~5 seconds — what fired, on
+    which service, the impact (or "no customer impact"), and how it ended. Name the service and the
+    outcome; no jargon-only lines. Example:
+    `svc-notification-preferences p90 latency briefly crossed Warn on Sunday; Alfred acked, self-resolved in ~9 min, no customer impact.`
+  - **What happened:** the detailed account. State **Observed** facts directly from the payload
+    (what fired, when, trigger level, who acked via `escalation_show`, ack latency, whether promoted
+    via `incident_show`). Then give a **Likely cause** only when `alert_show`/`incident_show`
+    actually supports one; hedge it (`likely …`) and name the basis. If the signals do not support a
+    clear cause, write **"Cause not determined from available signals."** Never fabricate a
+    plausible-sounding narrative.
 - **Env / cluster — be unambiguous about prod vs non-prod.** Derive env from the monitor's
   **query scope** (not the `env:` tag), and **name the actual cluster** (e.g. `dev-eks-cluster`).
   If the monitor currently reads a different state than the scope where the alert is firing
@@ -249,6 +261,12 @@ instead of resetting each run:
 
 - `incident_list` over the window. Split into **Production — Customer Impact** vs
   **Operational — Deploys / Data Repairs / Infra** (use severity/labels/service to classify).
+- **For each incident, lead with a TL;DR, then the detail** (same shape as the Agent Finding;
+  keep the labels literally):
+  - **TL;DR:** one sentence — what broke, who/what was impacted, and current status. Example:
+    `Cashout API returned 5xx for ~12 min affecting new cashouts; mitigated by rollback, resolved.`
+  - **What happened:** timeline (detected → mitigated → resolved), scope/impact, root cause (or
+    "Cause not determined from available signals."), and any follow-ups.
 - If incident.io returns auth error: render "Data unavailable — check incident.io manually
   (connector returned Unauthorized)." Do not invent incidents.
 
@@ -378,13 +396,19 @@ next step.
      Add a trailing note once: `Priority = monitor severity (High/Low); Warn/Alert = trigger
      level — a High-priority monitor can fire only at Warn.`
 3. **`<h2>` Incidents (15 minutes)**
-   - `<h3>` Production Incidents — Customer Impact → list, or "No production incidents this week."
-   - `<h3>` Operational Incidents — Deploys / Data Repairs / Infra → list, or the auth-error note.
+   - `<h3>` Production Incidents — Customer Impact → per incident, lead with
+     `<strong>TL;DR:</strong> <one line>` then `<strong>What happened:</strong> <detail>` (Step 3),
+     or "No production incidents this week."
+   - `<h3>` Operational Incidents — Deploys / Data Repairs / Infra → same `TL;DR:` + `What happened:`
+     shape, or the auth-error note.
 4. **`<h2>` incident.io Alerts / Monitoring (15 minutes)**
    - `<h3>` Required Human Attention — Acknowledged by oncall → `<table>`:
      `Alert | Priority | Service | On-call | Agent Finding`. Priority as a status lozenge
-     (High=red, Low=blue). If none: "No alerts required human attention this week."
-   - `<h3>` Auto-Resolved — Escalation Cancelled → list, or "No alerts auto-resolved this week."
+     (High=red, Low=blue). The **Agent Finding** cell must lead with
+     `<strong>TL;DR:</strong> <one line>` then `<strong>What happened:</strong> <detail>` (Step 2).
+     If none: "No alerts required human attention this week."
+   - `<h3>` Auto-Resolved — Escalation Cancelled → list; each item leads with `TL;DR:` then
+     `What happened:` (Step 2), or "No alerts auto-resolved this week."
    - `<h3>` Recurring / Flappy Alerts — Monitor Tuning Candidates → `<table>`:
      `Alert | Times Fired | Notes`. If none: "No recurring/flappy alerts this week."
    - `<h3>` 🔧 Monitor Tuning Recommendations (learned) → `<table>`:
@@ -478,6 +502,10 @@ like the weekly ones, is written only by this agent.
   day elapsed, report "too early to call."
 - **Root cause:** state observed facts vs hedged inference; if unsupported, write "Cause not
   determined from available signals." Never fabricate.
+- **TL;DR / What happened:** every alert Agent Finding and every incident leads with a one-sentence
+  `TL;DR:` (skimmable summary — service + impact + outcome) followed by a `What happened:` detail
+  block (observed timeline + hedged cause). Keep both labels literally; the dashboard splits on them
+  to render a summary line plus an expandable explanation.
 - **Tuning candidate** = a monitor that trips any `noise_*` / `nodata_stale_days` bar.
 - **Tuning recommendation** = an advisory `before → after` change (query / threshold / routing /
   deprecation). It is a **suggestion only — never applied**, and every threshold proposal must
