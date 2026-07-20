@@ -149,6 +149,12 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
       items.push({ bundle: b, win: window });
     }
 
+    // Recommendations reflect the CURRENT (newest) week only, so older weeks
+    // don't re-add the same monitors under slightly different classifications.
+    items.forEach((it, i) => {
+      if (i < items.length - 1) it.bundle.recommendations = [];
+    });
+
     // --- Persist (one per week) + feedback ----------------------------------
     // Only live mode owns monitor config; other sources must not clobber it.
     let result: Awaited<ReturnType<typeof persistBundle>> | undefined;
