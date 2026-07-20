@@ -1,9 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { runSync } from "@/lib/ingest/run";
-import { getConfig } from "@/lib/config";
+import { prisma } from "@/lib/db";
 import { SyncTrigger } from "@/lib/constants";
+
+const exec = promisify(execFile);
 
 /** Manual "Sync now" trigger from the UI (re-parses the current source). */
 export async function syncNowAction() {
@@ -18,43 +22,33 @@ export async function syncNowAction() {
 }
 
 /**
- * "Refresh from source": POST to the cloud Health Check agent's webhook, which
- * regenerates the Confluence pages and (chained) runs the daily sync. This is
- * asynchronous — the cloud run takes minutes, then pushes the updated SQLite to
- * main; run `git pull` afterward to see it locally.
+ * "Refresh from source": `git pull` the latest memory from `main`. The daily
+ * automation already fetches Confluence, rebuilds `prisma/oncall.db`, and pushes
+ * to `main` — so a fast-forward pull is all the local dashboard needs to catch up.
  */
 export async function refreshFromSourceAction() {
-  const cfg = getConfig();
-  if (!cfg.refresh.webhookUrl) {
-    return {
-      ok: false,
-      message:
-        "Refresh webhook not configured. Set HEALTHCHECK_WEBHOOK_URL (+ optional HEALTHCHECK_WEBHOOK_SECRET).",
-    };
-  }
+  const cwd = process.cwd();
   try {
-    const res = await fetch(cfg.refresh.webhookUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(cfg.refresh.webhookSecret
-          ? { Authorization: `Bearer ${cfg.refresh.webhookSecret}` }
-          : {}),
-      },
-      body: JSON.stringify({ source: "dashboard", reason: "manual refresh" }),
-    });
-    if (!res.ok) {
-      return { ok: false, message: `Webhook returned HTTP ${res.status}.` };
-    }
+    // Drop the transient SQLite churn (the live read connection touches the
+    // file) so the pull can fast-forward the committed DB.
+    await exec("git", ["checkout", "--", "prisma/oncall.db"], { cwd }).catch(
+      () => {},
+    );
+    const { stdout } = await exec("git", ["pull", "--ff-only"], { cwd });
+    // Reconnect Prisma so the next query reads the freshly pulled DB file.
+    await prisma.$disconnect().catch(() => {});
+    revalidatePath("/", "layout");
+    const updated = !/already up to date/i.test(stdout);
     return {
       ok: true,
-      message:
-        "Refresh started — the cloud agent is regenerating Confluence and syncing. Run `git pull` in a few minutes to see it.",
+      message: updated
+        ? "Pulled the latest from main — dashboard updated."
+        : "Already up to date.",
     };
   } catch (err) {
-    return {
-      ok: false,
-      message: `Failed to trigger refresh: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    const e = err as { stderr?: string; message?: string };
+    const raw = (e.stderr && e.stderr.trim()) || e.message || String(err);
+    const line = raw.split("\n").filter(Boolean).pop() ?? raw;
+    return { ok: false, message: `git pull failed: ${line}` };
   }
 }

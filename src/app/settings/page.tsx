@@ -1,4 +1,4 @@
-import { getConfig, canApply, canRefreshFromSource } from "@/lib/config";
+import { getConfig, canApply } from "@/lib/config";
 import { getRuns, getSourceSummary } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -86,27 +86,21 @@ export default async function SettingsPage() {
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <CardTitle>How data refreshes</CardTitle>
           <div className="flex items-center gap-2">
-            <RefreshSourceButton configured={canRefreshFromSource(cfg)} />
+            <RefreshSourceButton />
             <SyncNowButton />
           </div>
         </CardHeader>
         <CardContent className="space-y-3 text-sm text-muted-foreground">
           <p>
-            <strong>Refresh from source</strong> triggers the cloud Health Check
-            agent (regenerates the Confluence pages) and chains the daily sync. It
-            runs asynchronously (a few minutes); when it finishes it pushes the
-            updated memory to <code>main</code> — then pull it locally:
-          </p>
-          <pre className="overflow-x-auto rounded-md border border-border bg-background p-3 text-xs">
-            git pull
-          </pre>
-          <p>
-            The same refresh also runs automatically on the daily schedule.
+            <strong>Refresh from source</strong> runs <code>git pull</code> to fetch
+            the latest memory the daily automation already pushed to{" "}
+            <code>main</code> (Confluence → ingest → PR → auto-merge). No local
+            credentials needed; it fast-forwards the committed <code>oncall.db</code>.
           </p>
           <p>
             <strong>Sync now</strong> re-parses the Confluence markdown already in{" "}
             <code>data/confluence/</code> into SQLite — useful after editing those
-            files locally; it does not fetch from Confluence.
+            files locally; it does not fetch anything remote.
           </p>
         </CardContent>
       </Card>

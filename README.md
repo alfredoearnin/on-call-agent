@@ -154,7 +154,10 @@ The real daily refresh runs in the cloud via **two Cursor Automations**:
    it to `data/confluence/handoff.md`, runs `npm run ingest`, and opens a PR that
    **auto-merges** to `main`. Then you `git pull` locally.
 
-You can also refresh without the cloud:
+To pull that result into the running dashboard, click **Refresh from source** on the
+Settings page (it runs `git pull` and reconnects the DB) — or run `git pull` yourself.
+
+You can also re-process without the cloud:
 
 - **Sync now** (top bar) or `npm run ingest` — re-parses the **local**
   `data/confluence/*.md` into the DB (does not fetch from Confluence).
@@ -183,7 +186,6 @@ documents everything.
 | `JIRA_BASE_URL` / `JIRA_EMAIL` / `JIRA_API_TOKEN` / `JIRA_VULN_FILTER_ID` | optional | Vulnerability counts. |
 | `APPLY_ENABLED` | no | `true` unlocks the Apply-suggestion write path. Default `false`. |
 | `DD_APP_KEY_WRITE` | apply only | Datadog **write**-scoped app key (separate from the read key). |
-| `HEALTHCHECK_WEBHOOK_URL` / `HEALTHCHECK_WEBHOOK_SECRET` | optional | Lets the **Refresh from source** button trigger the cloud Health Check agent. |
 | `CRON_SECRET` | hosted auto | Guards the `/api/ingest` route used by a scheduler. |
 | `OPERATOR_NAME` | no | Name recorded in the apply audit trail. |
 
@@ -250,9 +252,10 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
 
 - **`DATABASE_URL` not found** — run `bash scripts/install.sh` (creates `.env`).
 - **Empty dashboard** — run `bash scripts/init.sh` or `npm run ingest`.
-- **Dashboard looks stale** — it only reflects what's in `data/confluence/*.md`.
-  Run the daily-refresh automation (or **Refresh from source**), then `git pull`;
-  **Sync now** only re-parses the files already on disk.
+- **Dashboard looks stale** — it only reflects the committed memory. Click
+  **Refresh from source** (runs `git pull`) to pull the latest that the daily
+  automation pushed to `main`; **Sync now** only re-parses the local
+  `data/confluence/*.md` files.
 - **New Confluence format not showing** — did you paste the updated `on-call.md` into
   the Health Check automation? The cloud agent runs its pasted instructions, not this
   repo's copy.
