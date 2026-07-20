@@ -44,18 +44,14 @@ export function DayPicker({
           onChange={(e) =>
             router.push(`/daily?week=${selectedWeek}&day=${e.target.value}`)
           }
-          disabled={days.length === 0}
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring disabled:opacity-50"
+          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm text-foreground outline-none focus:border-ring"
         >
-          {days.length === 0 ? (
-            <option value={selectedDay}>{selectedDay}</option>
-          ) : (
-            days.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))
-          )}
+          <option value="all">All week</option>
+          {days.map((d) => (
+            <option key={d} value={d}>
+              {d}
+            </option>
+          ))}
         </select>
       </label>
     </div>

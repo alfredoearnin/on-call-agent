@@ -29,19 +29,24 @@ export default async function DailyPage({
     (i) => i.classification === IncidentClass.Operational,
   );
 
-  const totalAlerts =
-    data.requiredHumanAttention.length +
-    data.autoResolved.length +
-    data.other.length;
+  const shownAlerts =
+    data.requiredHumanAttention.length + data.autoResolved.length;
+  const isAllWeek = data.selectedDay === "all";
+  const weekLabel =
+    data.weeks.find((w) => w.start === data.selectedWeek)?.label ??
+    data.selectedWeek;
+  const scope = isAllWeek ? "week" : "day";
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Daily incidents & alerts</h1>
+          <h1 className="text-xl font-semibold">
+            {isAllWeek ? "Weekly incidents & alerts" : "Daily incidents & alerts"}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            {totalAlerts} alert(s) · {data.incidents.length} incident(s) on{" "}
-            {data.selectedDay}
+            {shownAlerts} alert(s) · {data.incidents.length} incident(s){" "}
+            {isAllWeek ? `· week ${weekLabel}` : `on ${data.selectedDay}`}
           </p>
         </div>
         <DayPicker
@@ -59,7 +64,7 @@ export default async function DailyPage({
           <CardContent className="space-y-2">
             {prodIncidents.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No production incidents this day.
+                No production incidents this {scope}.
               </p>
             ) : (
               prodIncidents.map((i) => (
@@ -84,7 +89,7 @@ export default async function DailyPage({
           <CardContent className="space-y-2">
             {opsIncidents.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No operational incidents this day.
+                No operational incidents this {scope}.
               </p>
             ) : (
               opsIncidents.map((i) => (
@@ -105,14 +110,14 @@ export default async function DailyPage({
         subtitle="Acknowledged by on-call"
         alerts={data.requiredHumanAttention}
         tz={tz}
-        empty="No alerts required human attention this day."
+        empty={`No alerts required human attention this ${scope}.`}
       />
       <Section
         title="Auto-resolved"
         subtitle="Escalation cancelled / no human ack"
         alerts={data.autoResolved}
         tz={tz}
-        empty="No alerts auto-resolved this day."
+        empty={`No alerts auto-resolved this ${scope}.`}
       />
       {data.other.length > 0 && (
         <p className="text-xs text-muted-foreground">

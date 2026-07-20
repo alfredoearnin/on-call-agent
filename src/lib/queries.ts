@@ -184,9 +184,9 @@ export async function getDailyView(
 
   const wk = byWeek.get(selectedWeek);
   const dayOptions = weeks.find((w) => w.start === selectedWeek)?.days ?? [];
+  // Default to the whole week ("all"); a specific day narrows the view.
   const selectedDay =
-    (dayISO && dayOptions.includes(dayISO) ? dayISO : dayOptions[0]) ??
-    selectedWeek;
+    dayISO && dayISO !== "all" && dayOptions.includes(dayISO) ? dayISO : "all";
 
   const weekAlerts = wk
     ? await prisma.alertFire.findMany({
@@ -204,9 +204,10 @@ export async function getDailyView(
 
   const newFires = weekAlerts.filter((a) => a.firingKind !== FiringKind.Stale);
   const carryover = weekAlerts.filter((a) => a.firingKind === FiringKind.Stale);
-  const dayFires = dayOptions.includes(selectedDay)
-    ? newFires.filter((a) => dayKey(a.firedAt, tz) === selectedDay)
-    : newFires;
+  const dayFires =
+    selectedDay === "all"
+      ? newFires
+      : newFires.filter((a) => dayKey(a.firedAt, tz) === selectedDay);
 
   return {
     weeks,
