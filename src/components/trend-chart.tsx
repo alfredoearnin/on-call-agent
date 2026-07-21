@@ -7,6 +7,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  Legend,
   CartesianGrid,
 } from "recharts";
 
@@ -27,52 +28,71 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
     );
   }
   return (
-    <div className="h-56 w-full">
+    <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, left: -20, bottom: 0 }}>
+        <LineChart data={data} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis
             dataKey="label"
-            tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
             stroke="var(--border)"
+            minTickGap={24}
+            interval="preserveStartEnd"
           />
           <YAxis
-            tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 12 }}
             stroke="var(--border)"
             allowDecimals={false}
+            width={44}
+            label={{
+              value: "alerts",
+              angle: -90,
+              position: "insideLeft",
+              style: { fill: "var(--muted-foreground)", fontSize: 11 },
+            }}
           />
           <Tooltip
             contentStyle={{
               background: "var(--card)",
               border: "1px solid var(--border)",
               borderRadius: 8,
-              fontSize: 12,
+              fontSize: 13,
             }}
-            labelStyle={{ color: "var(--foreground)" }}
+            labelStyle={{ color: "var(--foreground)", fontWeight: 600 }}
+          />
+          <Legend
+            verticalAlign="bottom"
+            height={28}
+            iconType="plainline"
+            wrapperStyle={{ fontSize: 12 }}
           />
           <Line
             type="monotone"
             dataKey="alerts"
-            name="Alerts (wtd)"
+            name="Alerts (week-to-date)"
             stroke="var(--primary)"
             strokeWidth={2}
-            dot={false}
+            dot={{ r: 2.5, fill: "var(--primary)", strokeWidth: 0 }}
+            activeDot={{ r: 4 }}
           />
           <Line
             type="monotone"
             dataKey="runRate"
-            name="Run-rate /wk"
+            name="Projected / week"
             stroke="var(--warn)"
             strokeWidth={2}
-            dot={false}
+            strokeDasharray="5 3"
+            dot={{ r: 2.5, fill: "var(--warn)", strokeWidth: 0 }}
+            activeDot={{ r: 4 }}
           />
           <Line
             type="monotone"
             dataKey="stale"
-            name="Stale firing"
+            name="Stale (carryover)"
             stroke="var(--alert)"
             strokeWidth={2}
-            dot={false}
+            dot={{ r: 2.5, fill: "var(--alert)", strokeWidth: 0 }}
+            activeDot={{ r: 4 }}
           />
         </LineChart>
       </ResponsiveContainer>

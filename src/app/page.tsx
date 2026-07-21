@@ -35,7 +35,7 @@ export default async function OverviewPage() {
   }
 
   const trendPoints = series.map((r) => ({
-    label: DateTime.fromJSDate(r.startedAt, { zone: tz }).toFormat("MMM d"),
+    label: DateTime.fromJSDate(r.startedAt, { zone: tz }).toFormat("MMM d, h:mm a"),
     alerts: r.totalAlerts,
     runRate: Math.round(r.runRateWeekly ?? 0),
     active: r.activeFiring,
@@ -106,10 +106,21 @@ export default async function OverviewPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Alert volume trend (from memory)</CardTitle>
           <span className="text-xs text-muted-foreground">
-            {series.length} run(s)
+            {series.length} sync(s)
           </span>
         </CardHeader>
         <CardContent>
+          <p className="mb-3 text-sm leading-relaxed text-muted-foreground">
+            Each point is a sync run.{" "}
+            <span className="font-medium text-primary">Alerts (week-to-date)</span>{" "}
+            is how many have fired so far this on-call week;{" "}
+            <span className="font-medium text-warn">projected / week</span> is the
+            run-rate pace (extrapolated to a full week);{" "}
+            <span className="font-medium text-alert">stale (carryover)</span> is
+            lingering alerts from prior weeks. Early in a week the count is low
+            while the projection already shows the expected pace — they converge as
+            the week fills in.
+          </p>
           <TrendChart data={trendPoints} />
         </CardContent>
       </Card>
