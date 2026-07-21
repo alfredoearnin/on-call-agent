@@ -76,6 +76,11 @@
   border-color: var(--border);
 }
 
+html {
+  /* Base size for all rem-based utilities — bumped for readability. */
+  font-size: 17px;
+}
+
 html,
 body {
   background-color: var(--background);

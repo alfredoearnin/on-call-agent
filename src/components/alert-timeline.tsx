@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { CalendarDays } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { priorityTone, fmtTime } from "@/lib/format";
+import { FindingDetail } from "@/components/finding-detail";
 import { AlertDisposition } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,7 @@ interface TimelineAlert {
   disposition: string | null;
   firedAt: Date;
   env: string | null;
+  finding: string | null;
   monitor?: { service: string | null; datadogUrl: string | null } | null;
 }
 
@@ -98,6 +100,7 @@ export function AlertTimeline({
                       </Link>
                     )}
                   </div>
+                  <FindingDetail finding={a.finding} className="mt-1.5" />
                 </li>
               );
             })}
