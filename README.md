@@ -71,6 +71,9 @@ When you change `on-call.md`, update **both**: commit the repo copy **and** past
 new version into the Health Check automation (the cloud agent does not read this
 repo). Only then will new Confluence pages reflect the change.
 
+The same two-copy rule applies to [`daily-refresh.md`](./daily-refresh.md), the prompt
+for the *On-call dashboard — daily refresh* automation.
+
 ---
 
 ## Data sources / modes
@@ -151,8 +154,9 @@ The real daily refresh runs in the cloud via **two Cursor Automations**:
    (re)writes the Confluence handoff page for the current on-call week. Its prompt is
    `on-call.md`.
 2. **On-call dashboard — daily refresh** — fetches the latest Confluence page, writes
-   it to `data/confluence/handoff.md`, runs `npm run ingest`, and opens a PR that
-   **auto-merges** to `main`. Then you `git pull` locally.
+   it to `data/confluence/handoff.md`, runs `npm run ingest`, and opens a PR that it
+   **merges immediately** into `main`. Its prompt is
+   [`daily-refresh.md`](./daily-refresh.md). Then you `git pull` locally.
 
 To pull that result into the running dashboard, click **Refresh from source** on the
 Settings page (it runs `git pull` and reconnects the DB) — or run `git pull` yourself.
