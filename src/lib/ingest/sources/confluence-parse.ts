@@ -111,17 +111,74 @@ export function parseWindow(
 
 // ── On-call schedule ────────────────────────────────────────────────────────
 
+/**
+ * The page writes the rotation as free prose, and the wording drifts: the
+ * canonical form is `primary: X; secondary: Y`, but when incident.io cannot be
+ * reached the agent hedges into `Primary X, Secondary Y`. Both are accepted, so
+ * a reworded page degrades the *confidence* of the names rather than dropping
+ * them. `on-call.md` documents the canonical form these patterns target.
+ */
+
+/**
+ * Every quantifier below is bounded. A name can itself contain spaces, so an
+ * unbounded `\s*` on either side of the capture gives the engine exponentially
+ * many ways to split a run of whitespace — a long enough run then hangs the
+ * ingest. Bounds keep the work per starting position constant.
+ */
+/** End of a name: punctuation, or a period that actually ends a sentence (so
+ * `ada.lovelace` is not truncated at its dot). */
+const NAME_END = String.raw`(?:[;,()]|\.(?:\s|$)|$)`;
+/** Optional bold markers around a name, and the name itself. */
+const NAME = String.raw`\*{0,2}\s{0,4}([^*;,()]{1,60}?)\s{0,4}\*{0,2}\s{0,4}`;
+/** Text between "Next handoff" and the first name (a date and an arrow). */
+const UNTIL_NAMES = String.raw`[^.]{0,120}?`;
+
+const CURRENT_ON_CALL = new RegExp(
+  String.raw`\bprimary\b\s{0,4}:?\s{0,4}${NAME}[;,]\s{0,4}secondary\b\s{0,4}:?\s{0,4}${NAME}${NAME_END}`,
+  "i",
+);
+
+/** `Next handoff … primary X, secondary Y`. */
+const NEXT_ROLE_FIRST = new RegExp(
+  String.raw`next handoff\b${UNTIL_NAMES}\bprimary\b\s{0,4}:?\s{0,4}${NAME},\s{0,4}secondary\b\s{0,4}:?\s{0,4}${NAME}${NAME_END}`,
+  "i",
+);
+
+/** `Next handoff … X primary, Y secondary` — same content, roles after names. */
+const NEXT_NAME_FIRST = new RegExp(
+  String.raw`next handoff\b${UNTIL_NAMES}${NAME}primary\b\s{0,4},\s{0,4}${NAME}secondary\b`,
+  "i",
+);
+
+/** Wording that means "we could not confirm this against incident.io". */
+const UNVERIFIED =
+  /could not be verified|cannot be verified|unverified|last verified|carried (?:over )?from/i;
+
+/** `Last verified (Aug 4)` or `last verified: 2026-08-04` → the date as written. */
+const VERIFIED_AS_OF = /last verified\s*(?:\(([^)]+)\)|:\s*([^.;,]+))/i;
+
+const flatten = (s: string) => s.replace(/\s+/g, " ");
+
 export function parseOnCall(md: string): NormalizedSchedule | undefined {
-  const t = md.replace(/\s+/g, " ");
-  const cur = /primary:\s*\**([^;*]+?)\**\s*;\s*secondary:\s*\**(.+?)\**\s*(?:\(|\.\s|;|$)/i.exec(t);
-  const next =
-    /Next handoff.+?primary\s+\**([^,*]+?)\**\s*,\s*secondary\s+\**(.+?)\**\s*(?:\.\s|\.$|$)/i.exec(t);
+  const whole = flatten(md);
+  const cur = CURRENT_ON_CALL.exec(whole);
+  const next = NEXT_ROLE_FIRST.exec(whole) ?? NEXT_NAME_FIRST.exec(whole);
   if (!cur && !next) return undefined;
+
+  // Scope the "is this verified?" question to the paragraph holding the names.
+  // Other sections say "verified" about unrelated things.
+  const context =
+    md.split("\n").map(flatten).find((l) => CURRENT_ON_CALL.test(l)) ?? whole;
+  const unverified = Boolean(cur) && UNVERIFIED.test(context);
+  const asOf = unverified ? VERIFIED_AS_OF.exec(context) : null;
+
   return {
-    primary: cur?.[1]?.trim(),
-    secondary: cur?.[2]?.trim(),
-    nextPrimary: next?.[1]?.trim(),
-    nextSecondary: next?.[2]?.trim(),
+    primary: cur ? clean(cur[1]) : undefined,
+    secondary: cur ? clean(cur[2]) : undefined,
+    nextPrimary: next ? clean(next[1]) : undefined,
+    nextSecondary: next ? clean(next[2]) : undefined,
+    unverified,
+    verifiedAsOf: clean(asOf?.[1] ?? asOf?.[2] ?? "") || undefined,
   };
 }
 
