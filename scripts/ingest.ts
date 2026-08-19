@@ -18,6 +18,10 @@ async function main() {
     console.error(`[ingest] FAILED: ${outcome.message}`);
     process.exit(1);
   }
+  for (const warning of outcome.warnings ?? []) {
+    console.warn(`[ingest] WARNING: ${warning}`);
+  }
+
   const k = outcome.kpis;
   console.log(
     `[ingest] done in ${Date.now() - started}ms — status=${outcome.status}` +

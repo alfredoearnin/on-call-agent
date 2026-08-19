@@ -19,7 +19,7 @@ import { classifyRecommendations } from "@/lib/ingest/tuning";
 import { persistBundle } from "@/lib/ingest/persist";
 import { reconcileFeedback } from "@/lib/ingest/feedback";
 import { acquireLock, releaseLock } from "@/lib/ingest/lock";
-import type { IngestBundle } from "@/lib/ingest/types";
+import type { IngestBundle, NormalizedSchedule } from "@/lib/ingest/types";
 
 export interface RunOptions {
   trigger?: Trigger;
@@ -32,6 +32,9 @@ export interface RunOutcome {
   runId?: string;
   status?: string;
   message?: string;
+  /** Non-fatal problems worth a human's attention (e.g. the handoff page no
+   * longer states who is on-call). Callers are expected to surface these. */
+  warnings?: string[];
   kpis?: Awaited<ReturnType<typeof persistBundle>>["kpis"];
 }
 
@@ -64,6 +67,27 @@ function windowForBundle(
     daysElapsed: days,
     timezone: fallback.timezone,
   };
+}
+
+/**
+ * The rotation is free prose on the handoff page, so a reworded line parses to
+ * nothing and silently blanks the Overview. Report that instead of letting the
+ * run look clean.
+ */
+function scheduleWarnings(schedule?: NormalizedSchedule): string[] {
+  if (!schedule?.primary || !schedule.secondary) {
+    return [
+      "on-call: no primary/secondary found on the handoff page — the Overview " +
+        "will show none. Check the rotation line against the format in on-call.md.",
+    ];
+  }
+  if (schedule.unverified) {
+    const asOf = schedule.verifiedAsOf ? ` (last confirmed ${schedule.verifiedAsOf})` : "";
+    return [
+      `on-call: names carried forward unverified${asOf} — confirm the rotation in incident.io.`,
+    ];
+  }
+  return [];
 }
 
 /** Minimal "next daily run" from a `m h * * *` cron; falls back to +1 day. */
@@ -171,6 +195,8 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
     );
     const status = anyUnavailable ? RunStatus.Partial : RunStatus.Success;
 
+    const warnings = scheduleWarnings(newest.schedule);
+
     const notesParts = [
       source === "confluence"
         ? `Confluence: ${items.length} week(s)`
@@ -179,6 +205,7 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
     notesParts.push(
       `feedback: ${feedback.applied} applied / ${feedback.validated} validated / ${feedback.regressed} regressed`,
     );
+    notesParts.push(...warnings);
 
     await prisma.ingestionRun.update({
       where: { id: run.id },
@@ -195,6 +222,8 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
         secondaryOnCall: newest.schedule?.secondary,
         nextPrimaryOnCall: newest.schedule?.nextPrimary,
         nextSecondaryOnCall: newest.schedule?.nextSecondary,
+        onCallUnverified: newest.schedule?.unverified ?? false,
+        onCallVerifiedAsOf: newest.schedule?.verifiedAsOf,
         ...(result?.kpis ?? {}),
       },
     });
@@ -214,7 +243,7 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
       },
     });
 
-    return { ok: true, runId: run.id, status, kpis: result?.kpis };
+    return { ok: true, runId: run.id, status, warnings, kpis: result?.kpis };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await prisma.ingestionRun.update({

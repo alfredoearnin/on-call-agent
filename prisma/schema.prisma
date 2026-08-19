@@ -53,6 +53,10 @@ model IngestionRun {
   secondaryOnCall     String?
   nextPrimaryOnCall   String?
   nextSecondaryOnCall String?
+  // Set when the handoff page carried the names forward instead of confirming
+  // them against incident.io; onCallVerifiedAsOf is the date as the page wrote it.
+  onCallUnverified   Boolean @default(false)
+  onCallVerifiedAsOf String?
 
   error String?
   notes String?
