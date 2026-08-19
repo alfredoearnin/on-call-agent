@@ -75,19 +75,24 @@ function windowForBundle(
  * run look clean.
  */
 function scheduleWarnings(schedule?: NormalizedSchedule): string[] {
-  if (!schedule?.primary || !schedule.secondary) {
-    return [
-      "on-call: no primary/secondary found on the handoff page — the Overview " +
-        "will show none. Check the rotation line against the format in on-call.md.",
-    ];
+  const warnings: string[] = [];
+
+  const missing = (["primary", "secondary"] as const).filter((role) => !schedule?.[role]);
+  if (missing.length) {
+    warnings.push(
+      `on-call: no ${missing.join(" or ")} found on the handoff page — the Overview ` +
+        "shows a dash. Check the rotation line against the format in on-call.md.",
+    );
   }
-  if (schedule.unverified) {
+
+  if (schedule?.unverified) {
     const asOf = schedule.verifiedAsOf ? ` (last confirmed ${schedule.verifiedAsOf})` : "";
-    return [
+    warnings.push(
       `on-call: names carried forward unverified${asOf} — confirm the rotation in incident.io.`,
-    ];
+    );
   }
-  return [];
+
+  return warnings;
 }
 
 /** Minimal "next daily run" from a `m h * * *` cron; falls back to +1 day. */
