@@ -1,4 +1,4 @@
-import { ShieldCheck, LifeBuoy, ArrowRight } from "lucide-react";
+import { ShieldCheck, LifeBuoy, ArrowRight, AlertTriangle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { fmtDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,10 @@ interface OnCallBannerProps {
   secondary?: string | null;
   nextPrimary?: string | null;
   nextSecondary?: string | null;
+  /** Names were carried forward from an earlier read, not confirmed live. */
+  unverified?: boolean;
+  /** When they were last confirmed, as the handoff page worded it. */
+  verifiedAsOf?: string | null;
   windowStart: Date | string;
   windowEnd: Date | string;
   tz: string;
@@ -22,6 +26,8 @@ export function OnCallBanner({
   secondary,
   nextPrimary,
   nextSecondary,
+  unverified,
+  verifiedAsOf,
   windowStart,
   windowEnd,
   tz,
@@ -38,6 +44,19 @@ export function OnCallBanner({
           {fmtDate(windowStart, tz)} → {fmtDate(windowEnd, tz)}
         </span>
       </div>
+
+      {unverified && (
+        <div className="flex items-start gap-2 border-b border-border bg-warn/10 px-4 py-2 text-xs text-warn">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <p>
+            <span className="font-semibold">
+              Unverified{verifiedAsOf ? ` since ${verifiedAsOf}` : ""}.
+            </span>{" "}
+            incident.io could not be reached, so these are the last known names
+            carried forward — confirm the rotation in incident.io before paging.
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-px bg-border sm:grid-cols-2">
         <OnCallPerson

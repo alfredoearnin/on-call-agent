@@ -94,14 +94,29 @@ function parseTable(body: string): string[][] {
 
 // ── Week window (Tue -> Tue) ────────────────────────────────────────────────
 
+const WINDOW =
+  /on-call week[^\n]*?(\d{4}-\d{2}-\d{2})[^\n]*?(?:→|->)[^\n]*?(\d{4}-\d{2}-\d{2})/i;
+
+/**
+ * The state banner sits above the header and cites the *next* week's page ("a
+ * new page opens for the next week", "see the next week's page (X → Y)"), so
+ * taking the first window on the page reports the wrong week once a page
+ * freezes. Prefer a line that is not talking about another week.
+ */
+function windowMatch(md: string): RegExpExecArray | null {
+  for (const line of md.split("\n")) {
+    if (NEXT_CUE.test(line)) continue;
+    const m = WINDOW.exec(line);
+    if (m) return m;
+  }
+  return WINDOW.exec(md);
+}
+
 export function parseWindow(
   md: string,
   tz: string,
 ): { start: Date; end: Date } | undefined {
-  const m =
-    /on-call week[^\n]*?(\d{4}-\d{2}-\d{2})[^\n]*?(?:→|->)[^\n]*?(\d{4}-\d{2}-\d{2})/i.exec(
-      md,
-    );
+  const m = windowMatch(md);
   if (!m) return undefined;
   const start = DateTime.fromISO(m[1], { zone: tz }).startOf("day");
   const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
@@ -111,17 +126,120 @@ export function parseWindow(
 
 // ── On-call schedule ────────────────────────────────────────────────────────
 
+/**
+ * The rotation is free prose and the wording drifts: three forms have shipped
+ * so far — `primary: X; secondary: Y`, `Primary X, Secondary Y` (when
+ * incident.io could not be reached), and `the new week's primary is X,
+ * secondary Y`. Matching whole sentences broke on each new one, so instead find
+ * every role label sitting next to an emphasised name and use a "next" cue to
+ * separate the upcoming rotation from the current one. `on-call.md` pins the
+ * canonical wording; this is the tolerance around it.
+ *
+ * Every quantifier is bounded: a name may contain spaces, so an unbounded `\s*`
+ * beside the capture lets the engine split a whitespace run exponentially many
+ * ways and hang the ingest.
+ */
+
+/** An emphasised name — every page bolds the people it names. */
+const BOLD_NAME = String.raw`\*\*\s{0,4}([\p{L}][^*\n;,()]{0,48}?)\s{0,4}\*\*`;
+/** The little that may sit between a role label and its name. */
+const LABEL = String.raw`\s{0,4}(?:is|:|—|–|-)?\s{0,4}`;
+
+/** `primary: **X**`, `primary is **X**`, `Primary **X**`. */
+const ROLE_THEN_NAME = new RegExp(
+  String.raw`\b(primary|secondary)\b${LABEL}${BOLD_NAME}`,
+  "gdiu",
+);
+/** `**X** primary` — the order the next-handoff line often uses. */
+const NAME_THEN_ROLE = new RegExp(
+  String.raw`${BOLD_NAME}\s{0,4}(primary|secondary)\b`,
+  "gdiu",
+);
+
+/** Marks a rotation as the one starting at the upcoming handoff. */
+const NEXT_CUE = /\b(?:next|new week|upcoming)\b/i;
+
+/**
+ * The paragraph whose job is to state the rotation: `On-call: …`,
+ * `On-call (closing week): …`, `_This on-call week — …`. Confining the scan to
+ * it keeps prose that merely credits someone with a role ("acked by **Grace
+ * Hopper** primary within 30s") from being read as the rotation.
+ */
+const ROTATION_PARAGRAPH = /^[_*\s]*(?:this\s+)?on-call\b/i;
+
+/**
+ * Sentence boundary. The period must follow two non-period characters so that
+ * `10:00 a.m. PT: primary **X**` stays joined to its "next" cue instead of
+ * being split into a cue-less fragment and read as the current rotation.
+ */
+const SENTENCE_END = /(?<=[^\s.][^\s.]\.)\s/;
+
+/** Wording that means "we could not confirm this against incident.io". */
+const UNVERIFIED =
+  /could not be verified|cannot be verified|unverified|last verified|carried (?:over )?from/i;
+
+/** `Last verified (Aug 4)` or `last verified: 2026-08-04` → the date as written. */
+const VERIFIED_AS_OF = /last verified\s*(?:\(([^)]+)\)|:\s*([^.;,]+))/i;
+
+const flatten = (s: string) => s.replace(/\s+/g, " ");
+
+type Role = "primary" | "secondary";
+
+/** Every `role → name` pairing in one sentence, in the order they appear. */
+function rolesNamed(sentence: string): { role: Role; name: string }[] {
+  const hits: { role: Role; name: string; at: number }[] = [];
+  const taken: [number, number][] = [];
+
+  for (const m of sentence.matchAll(ROLE_THEN_NAME)) {
+    hits.push({ role: m[1].toLowerCase() as Role, name: m[2], at: m.index });
+    taken.push(m.indices![2]!);
+  }
+
+  // `**X** primary` also matches inside `primary **X** secondary`, which would
+  // give X both roles and discard the real secondary. Skip names already spoken for.
+  for (const m of sentence.matchAll(NAME_THEN_ROLE)) {
+    const [from, to] = m.indices![1]!;
+    if (taken.some(([start, end]) => from < end && start < to)) continue;
+    hits.push({ role: m[2].toLowerCase() as Role, name: m[1], at: m.index });
+  }
+
+  return hits.sort((a, b) => a.at - b.at);
+}
+
 export function parseOnCall(md: string): NormalizedSchedule | undefined {
-  const t = md.replace(/\s+/g, " ");
-  const cur = /primary:\s*\**([^;*]+?)\**\s*;\s*secondary:\s*\**(.+?)\**\s*(?:\(|\.\s|;|$)/i.exec(t);
-  const next =
-    /Next handoff.+?primary\s+\**([^,*]+?)\**\s*,\s*secondary\s+\**(.+?)\**\s*(?:\.\s|\.$|$)/i.exec(t);
-  if (!cur && !next) return undefined;
+  const current: Partial<Record<Role, string>> = {};
+  const upcoming: Partial<Record<Role, string>> = {};
+  /** The paragraph naming the current rotation, for the verified/carried check. */
+  let context: string | undefined;
+
+  const paragraphs = md.split(/\n\s*\n/).map(flatten);
+  const declared = paragraphs.filter((p) => ROTATION_PARAGRAPH.test(p));
+
+  for (const flat of declared.length ? declared : paragraphs) {
+    // A paragraph can name both rotations, so classify sentence by sentence.
+    for (const sentence of flat.split(SENTENCE_END)) {
+      const named = rolesNamed(sentence);
+      if (!named.length) continue;
+      const isNext = NEXT_CUE.test(sentence);
+      for (const { role, name } of named) {
+        (isNext ? upcoming : current)[role] ??= clean(name);
+      }
+      if (!isNext) context ??= flat;
+    }
+  }
+
+  if (!current.primary && !current.secondary && !upcoming.primary) return undefined;
+
+  const unverified = Boolean(context) && UNVERIFIED.test(context!);
+  const asOf = unverified ? VERIFIED_AS_OF.exec(context!) : null;
+
   return {
-    primary: cur?.[1]?.trim(),
-    secondary: cur?.[2]?.trim(),
-    nextPrimary: next?.[1]?.trim(),
-    nextSecondary: next?.[2]?.trim(),
+    primary: current.primary,
+    secondary: current.secondary,
+    nextPrimary: upcoming.primary,
+    nextSecondary: upcoming.secondary,
+    unverified,
+    verifiedAsOf: clean(asOf?.[1] ?? asOf?.[2] ?? "") || undefined,
   };
 }
 

@@ -112,6 +112,11 @@ export interface NormalizedSchedule {
   secondary?: string;
   nextPrimary?: string;
   nextSecondary?: string;
+  /** The handoff page could not confirm these names against incident.io, so
+   * they are the last known rotation carried forward rather than live truth. */
+  unverified?: boolean;
+  /** When the names were last confirmed, verbatim from the page (e.g. "Aug 4"). */
+  verifiedAsOf?: string;
 }
 
 /** Pre-computed KPI numbers (e.g. parsed from the Confluence summary). When

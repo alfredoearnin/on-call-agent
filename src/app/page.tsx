@@ -62,6 +62,8 @@ export default async function OverviewPage() {
         secondary={run.secondaryOnCall}
         nextPrimary={run.nextPrimaryOnCall}
         nextSecondary={run.nextSecondaryOnCall}
+        unverified={run.onCallUnverified}
+        verifiedAsOf={run.onCallVerifiedAsOf}
         windowStart={run.windowStart}
         windowEnd={run.windowEnd}
         tz={tz}
