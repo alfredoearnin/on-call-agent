@@ -75,6 +75,36 @@ describe("parseOnCall", () => {
     assert.equal(schedule?.unverified, false);
   });
 
+  it("gives each role its own name when only a space separates them", () => {
+    const schedule = parseOnCall(
+      "On-call: primary **Ada Lovelace** secondary **Grace Hopper**.",
+    );
+
+    assert.equal(schedule?.primary, "Ada Lovelace");
+    assert.equal(schedule?.secondary, "Grace Hopper");
+  });
+
+  it("keeps an abbreviation from splitting names away from the next cue", () => {
+    const schedule = parseOnCall(
+      "On-call: Next handoff is Tue Aug 25 at 10:00 a.m. PT: " +
+        "primary **Alan Turing**, secondary **Ada Lovelace**.",
+    );
+
+    assert.equal(schedule?.primary, undefined, "next week's primary shown as current");
+    assert.equal(schedule?.nextPrimary, "Alan Turing");
+    assert.equal(schedule?.nextSecondary, "Ada Lovelace");
+  });
+
+  it("ignores prose crediting a role outside the rotation paragraph", () => {
+    const schedule = parseOnCall(
+      "Escalation acked by **Grace Hopper** primary within 30s.\n\n" +
+        "On-call: primary: **Ada Lovelace**; secondary: **Alan Turing**.",
+    );
+
+    assert.equal(schedule?.primary, "Ada Lovelace");
+    assert.equal(schedule?.secondary, "Alan Turing");
+  });
+
   it("does not mistake prose that merely mentions a role for a name", () => {
     const schedule = parseOnCall(
       "Every page was **human-acknowledged by Ada (primary on-call)** within ~20-55s.",

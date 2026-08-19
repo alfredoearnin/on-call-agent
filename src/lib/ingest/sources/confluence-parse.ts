@@ -148,16 +148,31 @@ const LABEL = String.raw`\s{0,4}(?:is|:|—|–|-)?\s{0,4}`;
 /** `primary: **X**`, `primary is **X**`, `Primary **X**`. */
 const ROLE_THEN_NAME = new RegExp(
   String.raw`\b(primary|secondary)\b${LABEL}${BOLD_NAME}`,
-  "giu",
+  "gdiu",
 );
 /** `**X** primary` — the order the next-handoff line often uses. */
 const NAME_THEN_ROLE = new RegExp(
   String.raw`${BOLD_NAME}\s{0,4}(primary|secondary)\b`,
-  "giu",
+  "gdiu",
 );
 
 /** Marks a rotation as the one starting at the upcoming handoff. */
 const NEXT_CUE = /\b(?:next|new week|upcoming)\b/i;
+
+/**
+ * The paragraph whose job is to state the rotation: `On-call: …`,
+ * `On-call (closing week): …`, `_This on-call week — …`. Confining the scan to
+ * it keeps prose that merely credits someone with a role ("acked by **Grace
+ * Hopper** primary within 30s") from being read as the rotation.
+ */
+const ROTATION_PARAGRAPH = /^[_*\s]*(?:this\s+)?on-call\b/i;
+
+/**
+ * Sentence boundary. The period must follow two non-period characters so that
+ * `10:00 a.m. PT: primary **X**` stays joined to its "next" cue instead of
+ * being split into a cue-less fragment and read as the current rotation.
+ */
+const SENTENCE_END = /(?<=[^\s.][^\s.]\.)\s/;
 
 /** Wording that means "we could not confirm this against incident.io". */
 const UNVERIFIED =
@@ -173,12 +188,21 @@ type Role = "primary" | "secondary";
 /** Every `role → name` pairing in one sentence, in the order they appear. */
 function rolesNamed(sentence: string): { role: Role; name: string }[] {
   const hits: { role: Role; name: string; at: number }[] = [];
+  const taken: [number, number][] = [];
+
   for (const m of sentence.matchAll(ROLE_THEN_NAME)) {
     hits.push({ role: m[1].toLowerCase() as Role, name: m[2], at: m.index });
+    taken.push(m.indices![2]!);
   }
+
+  // `**X** primary` also matches inside `primary **X** secondary`, which would
+  // give X both roles and discard the real secondary. Skip names already spoken for.
   for (const m of sentence.matchAll(NAME_THEN_ROLE)) {
+    const [from, to] = m.indices![1]!;
+    if (taken.some(([start, end]) => from < end && start < to)) continue;
     hits.push({ role: m[2].toLowerCase() as Role, name: m[1], at: m.index });
   }
+
   return hits.sort((a, b) => a.at - b.at);
 }
 
@@ -188,10 +212,12 @@ export function parseOnCall(md: string): NormalizedSchedule | undefined {
   /** The paragraph naming the current rotation, for the verified/carried check. */
   let context: string | undefined;
 
-  for (const paragraph of md.split(/\n\s*\n/)) {
-    const flat = flatten(paragraph);
+  const paragraphs = md.split(/\n\s*\n/).map(flatten);
+  const declared = paragraphs.filter((p) => ROTATION_PARAGRAPH.test(p));
+
+  for (const flat of declared.length ? declared : paragraphs) {
     // A paragraph can name both rotations, so classify sentence by sentence.
-    for (const sentence of flat.split(/(?<=\.)\s/)) {
+    for (const sentence of flat.split(SENTENCE_END)) {
       const named = rolesNamed(sentence);
       if (!named.length) continue;
       const isNext = NEXT_CUE.test(sentence);
