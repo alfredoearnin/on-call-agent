@@ -225,6 +225,7 @@ into a real monitor edit via the Datadog API. Guardrails:
 | `npm run dev` | Start the dashboard (dev). |
 | `npm run build` / `npm run start` | Production build / serve. |
 | `npm run ingest` | Run one sync now (re-parses the local source). |
+| `npm test` | Run the parser regression tests (`node --test`). |
 | `npm run scheduler` | Start the automatic local sync worker. |
 | `npm run seed` | Seed defaults + sample memory (idempotent). |
 | `npm run prisma:migrate` | Create/apply a schema migration (dev). |
@@ -263,6 +264,12 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
 - **New Confluence format not showing** — did you paste the updated `on-call.md` into
   the Health Check automation? The cloud agent runs its pasted instructions, not this
   repo's copy.
+- **No primary/secondary on the Overview** — the rotation is parsed out of the handoff
+  page's prose, so a reworded line yields nothing. `npm run ingest` prints an
+  `on-call:` warning when that happens; fix the wording to match the rotation-line
+  format in [`on-call.md`](./on-call.md) and re-run. An **Unverified** banner instead
+  means the page carried the names forward because incident.io was unreachable —
+  confirm the rotation in incident.io.
 - **Live mode returns nothing** — verify keys in `.env.local` and set
   `SYNC_SOURCE=live`; a missing/unauthorized source degrades gracefully and is
   reported on the Settings page rather than failing the whole run.

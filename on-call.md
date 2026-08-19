@@ -382,8 +382,23 @@ next step.
      week's page.`
 1. **Header** — `<h1>` `"Growth Team Ops Review — Weekly Handoff"`; `<p>` with
    `MM/DD/YYYY Growth Team Ops Review`, the window dates, source ("incident.io + Datadog,
-   read-only"), and "Last refreshed: <now> <timezone>". Include the on-call name(s) from
-   `schedule_show` (current primary + next).
+   read-only"), and "Last refreshed: <now> <timezone>".
+   - **Rotation line — fixed wording.** The dashboard parses this sentence to fill the
+     "On-call this week" banner, so write it verbatim in this shape, on its own line:
+
+     `_This on-call week — primary: **<name>**; secondary: **<name>** (shift <start> → <end>;
+     verified live via_ `schedule_show`_). Next handoff <date>: primary **<name>**, secondary
+     **<name>**._`
+
+     Keep `primary:` and `secondary:` with their colons, separated by a semicolon. Names from
+     `schedule_show`.
+   - **When `schedule_show` is unavailable** (incident.io down), do **not** drop the names and
+     do **not** invent them — carry the last known rotation forward and say so, in this shape:
+
+     `Last verified (<date>): Primary **<name>**, Secondary **<name>**.`
+
+     The dashboard recognises this as unverified and flags the banner accordingly. State the
+     reason in the same sentence (e.g. "incident.io connector down").
 2. **`<h2>` SLOs / SLAs (15 minutes)** — links **and** the auto-summary live **here**, before
    Incidents (verify ordering in the published page; don't let them drift below later sections).
    - Bulleted links: Consolidated PENG-Growth Dashboard (`dashboard_url`), PENG Bugs OOSLA
