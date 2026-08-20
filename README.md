@@ -94,19 +94,30 @@ email."* Slack's Google Calendar app also sets the status automatically when an 
 title contains "OOO" or "PTO", so this is not purely a matter of remembering. Workday
 is the system of record for time off, but has no connector here and sits behind SSO.
 
-Three states, and the third matters:
+**The banner always says which of four situations applies** — silence is never used,
+because silence cannot distinguish "nobody is away" from "nobody checked":
 
-| State | Meaning |
+| Shown | Meaning |
 | --- | --- |
-| available | The page's coverage check reported this person as available. |
-| out of office | An absence that is under way or still to come. The banner names them and says *until* or *from*. |
-| **unknown** | The page carried no coverage check, the check failed, or it did not mention this role. **Absence of a check is never rendered as "available."** |
+| **No planned time off in this rotation** (green) | The check ran and found nobody out of office in the on-call week or at the next handoff. |
+| **&lt;name&gt; is out of office until / from &lt;date&gt;** (amber) | An absence under way or still to come, with an `ooo` badge on the person. |
+| **Availability could not be checked (&lt;reason&gt;)** | The check ran and failed, e.g. Slack unreachable. |
+| **The handoff page carried no availability check** | No check on the page at all — stated explicitly as *not* an all-clear. |
 
-An absence whose dates have already passed reads as available — a lapsed absence is not
-absence. A page published before this feature existed shows nothing at all rather than
-nagging about every historical week, while a check that *tried and failed* shows
-"Coverage could not be checked" so a broken lookup is visible instead of looking like
-good news. `npm run ingest` prints a `handoff:` warning in both of the latter cases.
+Every variant carries the same provenance line: *"Read from Slack out-of-office status,
+which the EarnIn handbook requires for time off."* When individual people could not be
+resolved, they are named — "Not verified for &lt;name&gt;" — rather than being folded into
+the all-clear.
+
+An absence whose dates have already passed reads as available: a lapsed absence is not
+absence. `npm run ingest` prints a `handoff:` warning for both of the two bottom rows,
+so a missing or broken check is visible from the CLI too.
+
+**What this can and cannot see.** It catches anyone who followed the process the handbook
+describes. Someone who takes time off without setting a Slack status will not appear — and
+in that case the dashboard says *unknown*, never *available*. Slack's Google Calendar app
+sets the status automatically for events titled "OOO" or "PTO", which is what keeps the
+coverage from depending purely on memory.
 
 **Privacy.** The handoff page is committed to git, so anything written there is
 permanent and in every clone. The prompt therefore records only **who** is out and

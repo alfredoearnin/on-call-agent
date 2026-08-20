@@ -199,3 +199,70 @@ function toDate(iso: string | undefined): Date | undefined {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? undefined : d;
 }
+
+// ── Summary for the banner ──────────────────────────────────────────────────
+
+/**
+ * What the banner should say about the rotation's availability as a whole.
+ *
+ * The four kinds exist so silence is never load-bearing. Before this, a week with
+ * nobody away rendered exactly like a week nobody checked — both showed nothing —
+ * so a reader could not tell "everyone is around" from "we never asked". Each case
+ * now states itself.
+ */
+export const CoverageSummaryKind = {
+  /** The check ran and found nobody away in the reported window. */
+  AllAvailable: "all_available",
+  /** At least one rotation member is away. */
+  SomeOut: "some_out",
+  /** The page carried no coverage check at all. */
+  NotChecked: "not_checked",
+  /** The check ran but could not complete (e.g. Slack unreachable). */
+  CheckFailed: "check_failed",
+} as const;
+export type CoverageSummaryKind =
+  (typeof CoverageSummaryKind)[keyof typeof CoverageSummaryKind];
+
+export interface CoverageSummary {
+  kind: CoverageSummaryKind;
+  /** Roles that are away, in rotation order. Empty unless kind is SomeOut. */
+  out: CoverageRole[];
+  /** Roles the check could not resolve individually. */
+  unverified: CoverageRole[];
+  /** Why the check failed, when it did. */
+  reason?: string;
+}
+
+export function summarizeCoverage(
+  coverage: PageCoverage | undefined,
+  assessments: CoverageAssessments,
+): CoverageSummary {
+  if (!coverage) {
+    return { kind: CoverageSummaryKind.NotChecked, out: [], unverified: [] };
+  }
+  if (coverage.unavailableReason) {
+    return {
+      kind: CoverageSummaryKind.CheckFailed,
+      out: [],
+      unverified: [...ROLES],
+      reason: coverage.unavailableReason,
+    };
+  }
+
+  const out = ROLES.filter(
+    (r) => assessments[r].state === Coverage.OutOfOffice,
+  );
+  const unverified = ROLES.filter(
+    (r) => assessments[r].state === Coverage.Unknown,
+  );
+
+  if (out.length > 0) {
+    return { kind: CoverageSummaryKind.SomeOut, out, unverified };
+  }
+  // A block that resolved nobody is not an all-clear — it is a check that told us
+  // nothing, which must read the same as no check at all.
+  if (unverified.length === ROLES.length) {
+    return { kind: CoverageSummaryKind.NotChecked, out: [], unverified };
+  }
+  return { kind: CoverageSummaryKind.AllAvailable, out: [], unverified };
+}
