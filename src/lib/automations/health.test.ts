@@ -95,7 +95,12 @@ describe("assessAutomations", () => {
 
   it("reports the daily refresh unknown when git could not read origin/main", () => {
     const [, refresh] = assess({
-      git: { ref: "origin/main", commits: [], error: "fatal: bad revision" },
+      git: {
+        ref: "origin/main",
+        commits: [],
+        localCommits: [],
+        error: "fatal: bad revision",
+      },
     });
 
     assert.equal(refresh.state, AutomationHealthState.Unknown);
@@ -146,6 +151,41 @@ describe("assessAutomations", () => {
     assert.equal(refresh.state, AutomationHealthState.Failed);
     assert.equal(healthCheck.state, AutomationHealthState.Unknown);
     assert.ok(healthCheck.evidence.includes("cannot be observed"), healthCheck.evidence);
+  });
+
+  // Regression: origin/main advances on `git fetch`, which does NOT touch the
+  // working tree or the DB. Treating "the commit is on origin/main" as "a fresh
+  // page reached my DB" produced a false accusation against the health check on a
+  // checkout that had fetched but not pulled.
+  it("reports the health check unknown when today's refresh is on origin but not pulled here", () => {
+    const [healthCheck, refresh] = assess({
+      git: {
+        ref: "origin/main",
+        commits: [
+          {
+            sha: "remote1",
+            committedAt: new Date("2026-08-20T18:30:00Z"),
+            subject: "Daily refresh 2026-08-20 (#32)",
+          },
+        ],
+        localCommits: [
+          {
+            sha: "local1",
+            committedAt: new Date("2026-08-19T16:14:00Z"),
+            subject: "Daily refresh 2026-08-19 (#31)",
+          },
+        ],
+        lastFetchedAt: AFTER_DUE,
+      },
+      page: pageStamped("2026-08-19T15:00:00Z", "2026-08-19 8:00 AM PT"),
+    });
+
+    assert.equal(refresh.state, AutomationHealthState.Healthy, "the automation did land it");
+    assert.equal(healthCheck.state, AutomationHealthState.Unknown);
+    assert.ok(
+      /not been pulled|Refresh from source/.test(healthCheck.evidence),
+      healthCheck.evidence,
+    );
   });
 
   it("does not accuse the health check when the page was fetched before its own deadline", () => {
@@ -294,15 +334,14 @@ function gitWith(
   subjects: string[],
   opts: { fetchedAt?: Date; committedAt?: Date },
 ): GitEvidence {
-  return {
-    ref: "origin/main",
-    commits: subjects.map((subject, i) => ({
-      sha: `sha${i}`,
-      committedAt: opts.committedAt ?? new Date("2026-08-20T18:30:00Z"),
-      subject,
-    })),
-    lastFetchedAt: opts.fetchedAt,
-  };
+  const commits = subjects.map((subject, i) => ({
+    sha: `sha${i}`,
+    committedAt: opts.committedAt ?? new Date("2026-08-20T18:30:00Z"),
+    subject,
+  }));
+  // Default to a checkout that has pulled everything it can see; the
+  // fetched-but-not-pulled case is exercised explicitly above.
+  return { ref: "origin/main", commits, localCommits: commits, lastFetchedAt: opts.fetchedAt };
 }
 
 const pageStamped = (iso: string, text: string): PageEvidence => ({

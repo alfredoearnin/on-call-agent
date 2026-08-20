@@ -20,7 +20,7 @@ import {
   type AutomationHealthState as HealthState,
 } from "@/lib/constants";
 import { AUTOMATIONS, automationMeta } from "@/lib/automations/meta";
-import type { GitEvidence } from "@/lib/automations/git-evidence";
+import type { GitCommit, GitEvidence } from "@/lib/automations/git-evidence";
 
 /**
  * daily-refresh.md step 6b commits `Daily refresh $(date +%Y-%m-%d)`; the squash
@@ -119,8 +119,19 @@ export function assessAutomations(inputs: HealthInputs): AutomationHealth[] {
   const refresh = assessDailyRefresh({
     now, git, zone, dueAt, pastDue, deadline, todayKeys, expectedAt,
   });
+
+  // The moment a fresh copy of the page actually entered THIS working tree, which
+  // is the only thing that licenses a conclusion about the health check. It comes
+  // from HEAD, not from the remote-tracking ref: `git fetch` advances origin/main
+  // without touching the tree or the DB, so a fetched-but-not-pulled refresh means
+  // today's page has still never been read here.
+  const pulled = todaysRefreshCommit(git.localCommits, todayKeys);
+  const landedRemotely = Boolean(todaysRefreshCommit(git.commits, todayKeys));
+
   const healthCheck = assessHealthCheck({
-    now, page, zone, dueAt, pastDue, deadline, todayKeys, expectedAt, refresh,
+    now, page, zone, dueAt, pastDue, deadline, todayKeys, expectedAt,
+    pageObservedAt: pulled?.committedAt,
+    landedRemotely,
   });
 
   // Fixed order: step 1 before step 2, matching how the chain actually runs.
@@ -141,9 +152,9 @@ interface Ctx {
   expectedAt: Date;
 }
 
-/** The commit this automation was supposed to land today, if we can see it. */
-function todaysRefreshCommit(git: GitEvidence, todayKeys: Set<string>) {
-  for (const commit of git.commits) {
+/** The refresh commit for today in a given list, if it is there. */
+function todaysRefreshCommit(commits: GitCommit[], todayKeys: Set<string>) {
+  for (const commit of commits) {
     const m = DAILY_REFRESH_SUBJECT.exec(commit.subject.trim());
     if (m && todayKeys.has(m[1])) return commit;
   }
@@ -171,7 +182,7 @@ function assessDailyRefresh(
     };
   }
 
-  const commit = todaysRefreshCommit(git, todayKeys);
+  const commit = todaysRefreshCommit(git.commits, todayKeys);
   if (commit) {
     // Positive evidence is unconditional on when we last fetched: a commit that
     // exists cannot un-exist, so a stale view invalidates only NEGATIVE evidence.
@@ -224,23 +235,28 @@ function assessDailyRefresh(
 }
 
 function assessHealthCheck(
-  ctx: Ctx & { page: PageEvidence; refresh: AutomationHealth },
+  ctx: Ctx & {
+    page: PageEvidence;
+    /**
+     * When today's refresh commit landed in THIS working tree. Undefined means
+     * today's page has never been read here — see assessAutomations.
+     *
+     * Deliberately the commit time, not page.runStartedAt: a local
+     * `npm run ingest` bumps runStartedAt without re-fetching Confluence, so
+     * treating it as a fresh look would let a local re-parse manufacture an
+     * accusation against this automation.
+     */
+    pageObservedAt?: Date;
+    /** Today's refresh exists on the remote, whether or not it is pulled. */
+    landedRemotely: boolean;
+  },
 ): AutomationHealth {
   const meta = automationMeta(AutomationKey.HealthCheck);
-  const { page, zone, dueAt, pastDue, deadline, todayKeys, expectedAt, now, refresh } = ctx;
+  const {
+    page, zone, dueAt, pastDue, deadline, todayKeys, expectedAt, now,
+    pageObservedAt, landedRemotely,
+  } = ctx;
   const base = { key: meta.key, name: meta.label, produces: meta.produces, expectedAt, dueAt };
-
-  // The moment a FRESH copy of the page entered this repo. Defined only when
-  // today's refresh actually landed — that commit is the only thing that gives
-  // the page's stamp any evidentiary force about today.
-  //
-  // Deliberately the commit time, not page.runStartedAt: a local `npm run ingest`
-  // bumps runStartedAt without re-fetching Confluence, so treating it as a fresh
-  // look would let a local re-parse manufacture an accusation against this
-  // automation. Cost: on a day someone pulls and ingests by hand we say "unknown"
-  // where we could have said "failed". That is the safe direction.
-  const pageObservedAt =
-    refresh.state === AutomationHealthState.Healthy ? refresh.evidenceAt : undefined;
 
   if (page.noRun) {
     return {
@@ -300,14 +316,17 @@ function assessHealthCheck(
     };
   }
 
-  // The crux. Without today's refresh commit, today's page has never been fetched
-  // into this repo, so this automation's outcome is genuinely unobservable from
-  // here. Reporting "failed" would be blaming #1 for #2's failure.
+  // The crux. Without today's refresh commit in THIS tree, today's page has never
+  // been read here, so this automation's outcome is genuinely unobservable.
+  // Reporting "failed" would be blaming #1 for something it may not have done.
   if (!pageObservedAt) {
+    const why = landedRemotely
+      ? `Today's dashboard refresh has landed on the remote but has not been pulled into this checkout, so today's page has not been ingested here yet — click Refresh from source.`
+      : `Today's dashboard refresh has not landed, so today's page has never been fetched here and this automation's status today cannot be observed.`;
     return {
       ...base,
       state: AutomationHealthState.Unknown,
-      evidence: `The newest handoff page in this repo says "Last refreshed ${quoted}". Today's dashboard refresh has not landed, so today's page has never been fetched here and this automation's status today cannot be observed.`,
+      evidence: `The newest handoff page in this repo says "Last refreshed ${quoted}". ${why}`,
       evidenceAt: page.refreshedAt,
     };
   }

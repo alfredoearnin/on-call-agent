@@ -14,9 +14,22 @@ const exec = promisify(execFile);
  * main, so git is the evidence channel. Reading it is deliberately passive: no
  * fetch, no pull, no checkout. See readGitEvidence for why.
  */
+export interface GitCommit {
+  sha: string;
+  committedAt: Date;
+  subject: string;
+}
+
 export interface GitEvidence {
   ref: string;
-  commits: { sha: string; committedAt: Date; subject: string }[];
+  /** Commits on the remote-tracking ref — what the automation managed to land. */
+  commits: GitCommit[];
+  /**
+   * Commits reachable from HEAD — what has actually been pulled into this working
+   * tree, and therefore what the ingested DB could have seen. `git fetch` advances
+   * `commits` without touching this, so the two genuinely differ.
+   */
+  localCommits: GitCommit[];
   /**
    * When this checkout last had a chance to see new commits. Undefined means we
    * have never looked — which is why absence of a commit can only ever mean
@@ -62,20 +75,36 @@ export async function readGitEvidence(
       ["log", REMOTE_REF, "-n", LOG_DEPTH, `--format=${FMT}`],
       { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 1_000_000 },
     );
-    const commits = stdout
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [sha, iso, subject] = line.split("\x1f");
-        return { sha, committedAt: new Date(iso), subject };
-      });
-    return { ref: REMOTE_REF, commits, lastFetchedAt: await lastFetchAt(cwd) };
+    const [localCommits, lastFetchedAt] = await Promise.all([
+      readLog("HEAD", cwd).catch(() => []),
+      lastFetchAt(cwd),
+    ]);
+    return { ref: REMOTE_REF, commits: parseLog(stdout), localCommits, lastFetchedAt };
   } catch (err) {
     const e = err as { stderr?: string; message?: string };
     const raw = (e.stderr && e.stderr.trim()) || e.message || String(err);
     const line = raw.split("\n").filter(Boolean).pop() ?? raw;
-    return { ref: REMOTE_REF, commits: [], error: line };
+    return { ref: REMOTE_REF, commits: [], localCommits: [], error: line };
   }
+}
+
+function parseLog(stdout: string): GitCommit[] {
+  return stdout
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [sha, iso, subject] = line.split("\x1f");
+      return { sha, committedAt: new Date(iso), subject };
+    });
+}
+
+async function readLog(ref: string, cwd: string): Promise<GitCommit[]> {
+  const { stdout } = await exec(
+    "git",
+    ["log", ref, "-n", LOG_DEPTH, `--format=${FMT}`],
+    { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 1_000_000 },
+  );
+  return parseLog(stdout);
 }
 
 /**
