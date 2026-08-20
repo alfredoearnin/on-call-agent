@@ -134,3 +134,68 @@ export function trendArrow(trend: string | null | undefined): string {
 export function dayKey(d: Date | string, tz: string): string {
   return DateTime.fromJSDate(new Date(d), { zone: tz }).toISODate() ?? "";
 }
+
+/** One labelled block of a finding's "What happened" detail. */
+export interface FindingSection {
+  /** e.g. "Observed", "Likely cause". Absent for text before the first label. */
+  label?: string;
+  body: string;
+}
+
+/**
+ * Splits a finding detail into its labelled sections.
+ *
+ * The agent marks sections with markdown emphasis — `_Observed_`, `_Likely cause_`
+ * — but the same prose quotes Datadog queries stuffed with snake_case identifiers
+ * (`sum:kubernetes_state.job.failed{kube_app_name:…} by {kube_cluster_name,env}`).
+ * Running a general markdown renderer over that would eat the underscores out of
+ * the query and silently corrupt the one piece of text an on-call actually needs
+ * to copy. So this recognises only a deliberate section label, defined narrowly:
+ *
+ *   - at the very start, or after a sentence boundary (`.`, `)`, `:`, `;`) + space,
+ *   - opening with a capital letter,
+ *   - containing letters, spaces and hyphens only — which is what excludes
+ *     `_state.job.failed{kube_` and `_timeout); aiden.ramgoolam user_`,
+ *   - and short (a label, not a sentence).
+ *
+ * Everything else, underscores included, is passed through verbatim.
+ */
+const SECTION_LABEL = /(^|[.:;)]\s{1,3})_([A-Z][A-Za-z]{0,18}(?:[ -][A-Za-z]{1,18}){0,3})_/g;
+
+export function splitFindingSections(
+  detail: string | null | undefined,
+): FindingSection[] {
+  if (!detail) return [];
+  const text = detail.trim();
+  if (!text) return [];
+
+  const marks: { at: number; end: number; label: string }[] = [];
+  SECTION_LABEL.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = SECTION_LABEL.exec(text)) !== null) {
+    marks.push({
+      at: m.index + m[1].length,
+      end: m.index + m[0].length,
+      label: m[2].trim(),
+    });
+  }
+
+  if (marks.length === 0) return [{ body: text }];
+
+  const out: FindingSection[] = [];
+  const lead = text.slice(0, marks[0].at).trim();
+  if (lead) out.push({ body: stripLeadingDash(lead) });
+
+  marks.forEach((mark, i) => {
+    const bodyEnd = i + 1 < marks.length ? marks[i + 1].at : text.length;
+    const body = stripLeadingDash(text.slice(mark.end, bodyEnd).trim());
+    out.push({ label: mark.label, body });
+  });
+
+  return out;
+}
+
+/** The agent writes `_Observed_ — the thing`; the dash is a separator, not content. */
+function stripLeadingDash(s: string): string {
+  return s.replace(/^\s*[—–-]\s*/, "").trim();
+}
