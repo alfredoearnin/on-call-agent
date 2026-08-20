@@ -87,7 +87,7 @@ function scheduleWarnings(schedule?: NormalizedSchedule): string[] {
   if (missing.length) {
     warnings.push(
       `on-call: no ${missing.join(" or ")} found on the handoff page — the Overview ` +
-        "shows a dash. Check the rotation line against the format in on-call.md.",
+        "shows a dash. Check the rotation line against the format in the agent prompt (agents/).",
     );
   }
 
@@ -111,7 +111,7 @@ function refreshWarnings(pageRefresh?: PageRefresh): string[] {
   if (!pageRefresh) {
     return [
       'handoff: no "Last refreshed" stamp on the page — the health-check ' +
-        "automation's status cannot be observed. Check the wording against on-call.md.",
+        "automation's status cannot be observed. Check the wording against the agent prompt in agents/.",
     ];
   }
   if (!pageRefresh.at) {
@@ -131,7 +131,7 @@ function coverageWarnings(coverage?: PageCoverage): string[] {
   if (!coverage) {
     return [
       'handoff: no "Coverage check" block on the page — nobody\'s availability could be ' +
-        "verified. Check the wording against on-call.md.",
+        "verified. Check the wording against the agent prompt in agents/.",
     ];
   }
   if (coverage.unavailableReason) {

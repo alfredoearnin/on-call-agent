@@ -156,7 +156,7 @@ export interface CoverageEntry {
 
 /**
  * The handoff page's coverage check. Records only WHO is out and WHICH dates —
- * never a reason (see the redaction rules in on-call.md).
+ * never a reason (see the redaction rules in the agent prompt (agents/)).
  */
 export interface PageCoverage {
   /** When the check ran, verbatim as the page wrote it. */

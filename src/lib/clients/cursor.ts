@@ -65,7 +65,7 @@ export class CursorAutomationsClient {
         // abort errors, so a retry after a gateway timeout on a request that
         // actually landed would start a SECOND concurrent run. For automation #2
         // that means two agents each opening and merging a PR to main — exactly
-        // the conflict failure mode daily-refresh.md's "Why the merge is
+        // the conflict failure mode agents/OnCall dashboard.md's "Why the merge is
         // synchronous" section documents. A duplicate run is strictly worse than a
         // failed trigger: the user is standing at the button and can click again
         // knowingly. Do not "fix" this to the 3-retry default.

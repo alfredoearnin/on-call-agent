@@ -149,6 +149,38 @@ describe("the canonical daily-refresh prompt", () => {
       "the squash merge is gone — refreshes may pile up unmerged (see PRs #16-#28)",
     );
   });
+
+  // This automation merges to main unattended every day. A tree-wide conflict
+  // strategy would silently discard somebody else's commit, and the running prompt
+  // did exactly that for a while: `git merge origin/main -X ours` with a
+  // `git add -A` fallback and no guard. A failed refresh is recoverable; a lost
+  // commit is not.
+  it("never resolves conflicts tree-wide, only the two data paths", () => {
+    // Commands sit at the start of a line in these prompts; prohibitions appear
+    // mid-sentence in prose. So anchor on the command form — that way the prompt is
+    // free to say "never use -X ours" without tripping its own guard.
+    assert.doesNotMatch(
+      DAILY_REFRESH,
+      /^\s*git merge\b[^\n]*-X ours/m,
+      "-X ours is used as a command: it would silently discard someone else's commit",
+    );
+    assert.doesNotMatch(
+      DAILY_REFRESH,
+      /^\s*git add -A\b/m,
+      "git add -A would stage a conflict outside the data paths",
+    );
+  });
+
+  it("aborts rather than committing a conflict outside the data paths", () => {
+    assert.ok(
+      DAILY_REFRESH.includes("--diff-filter=U"),
+      "the conflict guard is gone — an unrelated conflict would be committed silently",
+    );
+    assert.ok(
+      DAILY_REFRESH.includes("git merge --abort"),
+      "nothing aborts the merge, so a bad resolution can still be pushed",
+    );
+  });
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────────

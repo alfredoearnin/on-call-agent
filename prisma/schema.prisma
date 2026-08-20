@@ -68,7 +68,7 @@ model IngestionRun {
 
   // The page's coverage check: per-role availability plus the dates the page stated,
   // as JSON (same text-column idiom as patchJson / beforeJson). Records only the FACT
-  // of absence and its dates — never a reason; see the redaction rules in on-call.md.
+  // of absence and its dates — never a reason; see the redaction rules in the agent prompt (agents/).
   // NULL means the page carried no coverage check, which is "unknown" for every role,
   // NOT "everyone is available".
   coverageJson String?
@@ -179,7 +179,7 @@ model Incident {
   @@index([weekStart])
 }
 
-/// The persistent tuning ledger row (on-call.md memory). Never deleted.
+/// The persistent tuning ledger row (the agent prompt in agents/ memory). Never deleted.
 model TuningRecommendation {
   id                String    @id @default(cuid())
   monitorId         String?

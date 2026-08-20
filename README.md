@@ -60,13 +60,14 @@ handoff pages. It defines:
   read-only tuning-recommendation engine;
 - mandatory **customer-PII redaction** and the "never modify monitors" constraints.
 
-**`agents/` is the source of truth.**
+**`agents/` is the single source of truth.** There is no second copy — the earlier
+`on-call.md` / `daily-refresh.md` pair was removed, because two files describing one
+prompt is exactly how they drifted.
 
 | File | Role |
 | --- | --- |
 | [`agents/Growth Team Ops Review Weekly Handof.md`](./agents/) | The Health Check prompt, as pasted into Cursor. **Edit this one.** |
 | [`agents/OnCall dashboard.md`](./agents/) | The daily-refresh prompt, as pasted into Cursor. |
-| `on-call.md`, `daily-refresh.md` | Pointers only. Kept because the README and ~40 code comments reference them by name. Editing them changes nothing. |
 
 The cloud agent does not read this repo, so a change is only live once you **paste the
 updated file into the automation's *Agent Instructions***. Committing it here records
@@ -369,8 +370,8 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   `data/confluence/*.md` files.
 - **New Confluence format not showing** — did you paste the updated prompt from
   `agents/` into the Health Check automation? The cloud agent runs its pasted
-  instructions, not this repo's copy. (Editing `on-call.md` does nothing — it is a
-  pointer.)
+  instructions, not this repo's copy. Committing a prompt change records what *should*
+  run; pasting it is what makes it run.
 - **No primary/secondary on the Overview** — the rotation is parsed out of the handoff
   page's prose, so a reworded line yields nothing. `npm run ingest` prints an
   `on-call:` warning when that happens; fix the wording to match the rotation-line

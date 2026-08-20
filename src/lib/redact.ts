@@ -1,5 +1,5 @@
 /**
- * Customer-PII redaction, ported from on-call.md (lines 109-125).
+ * Customer-PII redaction, ported from the agent prompt in agents/ (lines 109-125).
  *
  * Direct ingestion means raw Datadog/incident.io payloads reach us, so every
  * string is scrubbed BEFORE it is persisted or rendered. We redact regulated
@@ -92,7 +92,7 @@ export function redactDeep<T>(input: T): RedactionResult<T> {
   return { value, redacted };
 }
 
-/** Convenience: redact and append the on-call.md caveat marker when needed. */
+/** Convenience: redact and append the the agent prompt in agents/ caveat marker when needed. */
 export function redactLine(input: string): string {
   const { value, redacted } = redactString(input);
   return redacted

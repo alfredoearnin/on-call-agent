@@ -1,6 +1,6 @@
 /**
  * App-level string constants used instead of Prisma enums, so the same schema
- * runs unchanged on SQLite now and Postgres later. Values mirror on-call.md.
+ * runs unchanged on SQLite now and Postgres later. Values mirror the agent prompt in agents/.
  */
 
 /** Monitor severity/priority (a property of the monitor). */
@@ -20,7 +20,7 @@ export const MonitorState = {
 } as const;
 export type MonitorState = (typeof MonitorState)[keyof typeof MonitorState];
 
-/** Alert disposition (on-call.md Step 1/2). */
+/** Alert disposition (the agent prompt, Step 1/2). */
 export const AlertDisposition = {
   RequiredHumanAttention: "required_human_attention",
   AutoResolved: "auto_resolved",
@@ -28,7 +28,7 @@ export const AlertDisposition = {
 export type AlertDisposition =
   (typeof AlertDisposition)[keyof typeof AlertDisposition];
 
-/** Still-firing split: active prod vs stale/orphaned (on-call.md Step 1). */
+/** Still-firing split: active prod vs stale/orphaned (the agent prompt, Step 1). */
 export const FiringKind = {
   Active: "active",
   Stale: "stale",
@@ -36,14 +36,14 @@ export const FiringKind = {
 } as const;
 export type FiringKind = (typeof FiringKind)[keyof typeof FiringKind];
 
-/** Incident classification (on-call.md Step 3). */
+/** Incident classification (the agent prompt, Step 3). */
 export const IncidentClass = {
   ProductionCustomerImpact: "production_customer_impact",
   Operational: "operational",
 } as const;
 export type IncidentClass = (typeof IncidentClass)[keyof typeof IncidentClass];
 
-/** Tuning recommendation status lozenges (on-call.md Step 4b / ledger). */
+/** Tuning recommendation status lozenges (the agent prompt, Step 4b / ledger). */
 export const RecommendationStatus = {
   Proposed: "proposed",
   Recommend: "recommend",
@@ -65,7 +65,7 @@ export const Confidence = {
 export type Confidence = (typeof Confidence)[keyof typeof Confidence];
 
 /**
- * Tuning issue patterns (on-call.md Step 4b table). Each maps to a canonical
+ * Tuning issue patterns (the agent prompt, Step 4b table). Each maps to a canonical
  * recommended change.
  */
 export const IssueType = {

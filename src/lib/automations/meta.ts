@@ -29,14 +29,14 @@ export const AUTOMATIONS: readonly AutomationMeta[] = [
     step: 1,
     label: "Growth Engineering Health Check",
     produces: "the Confluence handoff page",
-    promptFile: "on-call.md",
+    promptFile: "the agent prompt in agents/",
   },
   {
     key: AutomationKey.DashboardRefresh,
     step: 2,
     label: "On-call dashboard — daily refresh",
     produces: "a Daily refresh commit on main",
-    promptFile: "daily-refresh.md",
+    promptFile: "agents/OnCall dashboard.md",
   },
 ] as const;
 

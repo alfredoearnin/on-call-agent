@@ -1,8 +1,8 @@
 import { AutomationKey } from "@/lib/constants";
 
 /**
- * Central configuration, mirroring the YAML block in on-call.md (lines 48-88).
- * Values come from the environment with the on-call.md defaults as fallbacks.
+ * Central configuration, mirroring the YAML block in the agent prompt (agents/) (lines 48-88).
+ * Values come from the environment with the the agent prompt in agents/ defaults as fallbacks.
  * Server-only module.
  */
 
@@ -96,7 +96,7 @@ export interface AppConfig {
     consoleUrl: Record<AutomationKey, string>;
   };
   cronSecret: string;
-  /** Noise/tuning thresholds (on-call.md lines 76-88). */
+  /** Noise/tuning thresholds (the agent prompt in agents/). */
   thresholds: {
     noiseMinFiresPerWeek: number;
     noiseMinRecurringWeeks: number;
