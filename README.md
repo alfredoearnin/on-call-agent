@@ -25,7 +25,7 @@ an agent generates, and the dashboard ingests copies of those pages into a
 git-committed SQLite "memory" DB.
 
 ```
-on-call.md   ← the PROMPT / spec (this repo + pasted into the Health Check agent)
+agents/Growth Team Ops Review Weekly Handof.md   ← the PROMPT (pasted into Cursor)
    │  drives
    ▼
 Growth Engineering Health Check   (Cursor Automation, runs daily)
@@ -45,9 +45,9 @@ Two Cursor Automations do the work; see [Keeping it fresh](#keeping-it-fresh-dai
 
 ---
 
-## `on-call.md` — the prompt for the Confluence pages
+## The agent prompts
 
-[`on-call.md`](./on-call.md) is **not documentation — it is the prompt** that the
+The Health Check prompt in [`agents/`](./agents/) is **not documentation — it is the prompt** that the
 *Growth Engineering Health Check* agent runs each day to produce the Confluence
 handoff pages. It defines:
 
@@ -60,19 +60,30 @@ handoff pages. It defines:
   read-only tuning-recommendation engine;
 - mandatory **customer-PII redaction** and the "never modify monitors" constraints.
 
-**Two copies, keep them in sync:**
+**`agents/` is the source of truth.**
 
-| Copy | Where | Role |
-| --- | --- | --- |
-| Repo copy | `on-call.md` (this repo) | Versioned reference; the dashboard parser targets this format. |
-| Agent copy | Pasted into the **Growth Engineering Health Check** automation's *Agent Instructions* | What the cloud agent actually executes. |
+| File | Role |
+| --- | --- |
+| [`agents/Growth Team Ops Review Weekly Handof.md`](./agents/) | The Health Check prompt, as pasted into Cursor. **Edit this one.** |
+| [`agents/OnCall dashboard.md`](./agents/) | The daily-refresh prompt, as pasted into Cursor. |
+| `on-call.md`, `daily-refresh.md` | Pointers only. Kept because the README and ~40 code comments reference them by name. Editing them changes nothing. |
 
-When you change `on-call.md`, update **both**: commit the repo copy **and** paste the
-new version into the Health Check automation (the cloud agent does not read this
-repo). Only then will new Confluence pages reflect the change.
+The cloud agent does not read this repo, so a change is only live once you **paste the
+updated file into the automation's *Agent Instructions***. Committing it here records
+what should be running; pasting it is what makes it run.
 
-The same two-copy rule applies to [`daily-refresh.md`](./daily-refresh.md), the prompt
-for the *On-call dashboard — daily refresh* automation.
+**Why this replaced the old two-copy rule.** There used to be a "versioned reference" in
+the repo and the real text living only inside Cursor. They drifted silently: the
+"Rotation line — fixed wording" instruction was dropped from the running prompt between
+the 2026-07-28 and 2026-08-11 pages, the Overview's on-call names broke, and the fix
+(PR #30) made `parseOnCall` tolerant of the new phrasing instead of restoring the
+instruction. Nobody noticed, because the spec lived in the copy that never ran.
+
+`src/lib/ingest/sources/prompt-contract.test.ts` now ties each parser to the wording it
+depends on and proves the parser reads a line built from that template — so the same
+drift fails a test instead of blanking a dashboard field weeks later. It also records one
+known gap as a `todo`: `parseKpis` expects `paging alerts: N total (X High, Y Low)`, which
+neither prompt asks for, so the KPI parse always falls back to derived numbers.
 
 ---
 
@@ -81,7 +92,7 @@ for the *On-call dashboard — daily refresh* automation.
 Someone named on-call who is on PTO is the gap that becomes an unanswered page, so the
 banner warns when the rotation is not actually covered.
 
-**The agent does the lookup, not the dashboard.** `on-call.md` Step 1 has the Health
+**The agent does the lookup, not the dashboard.** The Health Check prompt's Step 1 has the
 Check agent resolve the rotation from incident.io, then check each name's Slack status
 and write the result into the page as a fixed-format `Coverage check` block. The
 dashboard parses that block like any other prose on the page. **No Slack credential
@@ -206,11 +217,11 @@ The real daily refresh runs in the cloud via **two Cursor Automations**:
 
 1. **Growth Engineering Health Check** — reads Datadog + incident.io + Jira and
    (re)writes the Confluence handoff page for the current on-call week. Its prompt is
-   `on-call.md`.
+   `agents/Growth Team Ops Review Weekly Handof.md`.
 2. **On-call dashboard — daily refresh** — fetches the latest Confluence page, writes
    it to `data/confluence/handoff.md`, runs `npm run ingest`, and opens a PR that it
    **merges immediately** into `main`. Its prompt is
-   [`daily-refresh.md`](./daily-refresh.md). Then you `git pull` locally.
+   [`agents/OnCall dashboard.md`](./agents/). Then you `git pull` locally.
 
 To pull that result into the running dashboard, click **Refresh from source** on the
 Settings page (it runs `git pull` and reconnects the DB) — or run `git pull` yourself.
@@ -273,7 +284,7 @@ documents everything.
 | `DATABASE_URL` | yes | SQLite path (`file:./oncall.db`). |
 | `SYNC_SOURCE` | no | `auto` (default) / `confluence` / `demo` / `live`. |
 | `DEMO_MODE` | no | Legacy toggle; `true` forces bundled sample data. |
-| `TEAM_TAG` / `TEAM_LABEL` / `TIMEZONE` | no | Analysis scope (defaults mirror `on-call.md`). |
+| `TEAM_TAG` / `TEAM_LABEL` / `TIMEZONE` | no | Analysis scope (defaults mirror the agent prompt). |
 | `DD_SITE` | no | Datadog site (`datadoghq.com` = US1). |
 | `DD_API_KEY` / `DD_APP_KEY` | live only | Datadog **read** access. |
 | `INCIDENT_IO_API_KEY` | live only | incident.io **read** access (Bearer). |
@@ -356,13 +367,14 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   **Refresh from source** (runs `git pull`) to pull the latest that the daily
   automation pushed to `main`; **Sync now** only re-parses the local
   `data/confluence/*.md` files.
-- **New Confluence format not showing** — did you paste the updated `on-call.md` into
-  the Health Check automation? The cloud agent runs its pasted instructions, not this
-  repo's copy.
+- **New Confluence format not showing** — did you paste the updated prompt from
+  `agents/` into the Health Check automation? The cloud agent runs its pasted
+  instructions, not this repo's copy. (Editing `on-call.md` does nothing — it is a
+  pointer.)
 - **No primary/secondary on the Overview** — the rotation is parsed out of the handoff
   page's prose, so a reworded line yields nothing. `npm run ingest` prints an
   `on-call:` warning when that happens; fix the wording to match the rotation-line
-  format in [`on-call.md`](./on-call.md) and re-run. An **Unverified** banner instead
+  format in the [Health Check prompt](./agents/) and re-run. An **Unverified** banner instead
   means the page carried the names forward because incident.io was unreachable —
   confirm the rotation in incident.io.
 - **Live mode returns nothing** — verify keys in `.env.local` and set
@@ -370,7 +382,7 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   reported on the Settings page rather than failing the whole run.
 - **Apply button disabled** — set `APPLY_ENABLED=true` and `DD_APP_KEY_WRITE`.
 - **No out-of-office warnings ever appear** — almost always the two-copy rule: the
-  `Coverage check` step was added to this repo's `on-call.md` but not pasted into the
+  `Coverage check` step was added to the prompt in `agents/` but not pasted into the
   Health Check automation's Agent Instructions, so published pages carry no block.
   `npm run ingest` prints `handoff: no "Coverage check" block on the page` when that is
   the case.
