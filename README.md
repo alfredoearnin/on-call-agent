@@ -76,6 +76,46 @@ for the *On-call dashboard — daily refresh* automation.
 
 ---
 
+## Out-of-office warnings
+
+Someone named on-call who is on PTO is the gap that becomes an unanswered page, so the
+banner warns when the rotation is not actually covered.
+
+**The agent does the lookup, not the dashboard.** `on-call.md` Step 1 has the Health
+Check agent resolve the rotation from incident.io, then check each name's Slack status
+and write the result into the page as a fixed-format `Coverage check` block. The
+dashboard parses that block like any other prose on the page. **No Slack credential
+lives in the dashboard** — same principle as Confluence: the agent holds the
+credentials, the page carries the facts, the dashboard reads markdown.
+
+Slack status is the signal because the employee handbook already mandates it: *"please
+ensure you notify the company by updating your status in Slack and setting your OOO
+email."* Slack's Google Calendar app also sets the status automatically when an event
+title contains "OOO" or "PTO", so this is not purely a matter of remembering. Workday
+is the system of record for time off, but has no connector here and sits behind SSO.
+
+Three states, and the third matters:
+
+| State | Meaning |
+| --- | --- |
+| available | The page's coverage check reported this person as available. |
+| out of office | An absence that is under way or still to come. The banner names them and says *until* or *from*. |
+| **unknown** | The page carried no coverage check, the check failed, or it did not mention this role. **Absence of a check is never rendered as "available."** |
+
+An absence whose dates have already passed reads as available — a lapsed absence is not
+absence. A page published before this feature existed shows nothing at all rather than
+nagging about every historical week, while a check that *tried and failed* shows
+"Coverage could not be checked" so a broken lookup is visible instead of looking like
+good news. `npm run ingest` prints a `handoff:` warning in both of the latter cases.
+
+**Privacy.** The handoff page is committed to git, so anything written there is
+permanent and in every clone. The prompt therefore records only **who** is out and
+**which dates** — never the reason, the leave type, a verbatim Slack status, or any
+medical or personal detail. That is coverage information of the same character as the
+shift windows the page already carries.
+
+---
+
 ## Data sources / modes
 
 Selected by `SYNC_SOURCE` (default `auto`):
@@ -97,8 +137,9 @@ cloud by the daily-refresh automation, which drops the markdown into
 
 - **Overview** — KPIs (alert volume + run-rate trend, active/stale firing,
   escalation rate, open recommendations), a colored **on-call banner** (primary in
-  green, secondary in blue, next handoff), the alert-volume trend chart, top tuning
-  recommendations, SLO links, and vulnerabilities.
+  green, secondary in blue, next handoff, plus **out-of-office warnings** — see
+  below), the alert-volume trend chart, top tuning recommendations, SLO links, and
+  vulnerabilities.
 - **Daily** — incidents & alerts scoped to a whole **week** or a single **day**
   (two selectors), in either a **List** view (grouped by disposition) or a
   **Timeline** view (grouped by day). Every alert shows a **TL;DR** + a collapsible
@@ -317,6 +358,14 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   `SYNC_SOURCE=live`; a missing/unauthorized source degrades gracefully and is
   reported on the Settings page rather than failing the whole run.
 - **Apply button disabled** — set `APPLY_ENABLED=true` and `DD_APP_KEY_WRITE`.
+- **No out-of-office warnings ever appear** — almost always the two-copy rule: the
+  `Coverage check` step was added to this repo's `on-call.md` but not pasted into the
+  Health Check automation's Agent Instructions, so published pages carry no block.
+  `npm run ingest` prints `handoff: no "Coverage check" block on the page` when that is
+  the case.
+- **A rotation member shows no out-of-office state** — the agent could not resolve them
+  in Slack, or the block did not mention that role. It reads *unknown*, never
+  *available*; check the page's `Coverage check` block for a `could not be checked` line.
 - **An automation reads `unknown`** — the dashboard could not read the evidence, so
   it is not claiming a failure. Usually origin has not been fetched since today's
   deadline: click **Refresh from source**. It also reads `unknown` when the handoff

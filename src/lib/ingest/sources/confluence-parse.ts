@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
+  Coverage,
+  CoverageRole,
   Priority,
   MonitorState,
   AlertDisposition,
@@ -15,7 +17,9 @@ import type {
   NormalizedAlert,
   NormalizedMonitor,
   NormalizedRecommendation,
+  CoverageEntry,
   NormalizedSchedule,
+  PageCoverage,
   PageRefresh,
   ProposedPatch,
 } from "@/lib/ingest/types";
@@ -191,6 +195,132 @@ export function parseRefreshedAt(
     };
   }
   return undefined;
+}
+
+// ── Coverage check (who on the rotation is out of office) ───────────────────
+
+/**
+ * The page's coverage check, written by the Health Check agent after it resolves
+ * the rotation (see on-call.md Step 1). It is the only signal the dashboard has
+ * that a named on-call is actually unavailable.
+ *
+ * Three properties matter more than tolerance here:
+ *
+ * 1. The header line is REQUIRED. Its absence means the check never ran, which is
+ *    "unknown" — never "everyone is available". Those must not look the same.
+ * 2. Role lines are read only from INSIDE the block. Scanning the whole page would
+ *    misread ordinary prose like "* Primary shashank — acked in 13 s".
+ * 3. A role the block does not mention is Unknown, not Available.
+ *
+ * Every quantifier is bounded, for the same reason as the rotation and refresh
+ * regexes: an unbounded `\s*` next to a capture lets the engine split a whitespace
+ * run exponentially many ways and hang the ingest.
+ */
+const COVERAGE_FAILED =
+  /coverage\s{1,4}check\s{0,4}:\s{0,4}could\s{1,4}not\s{1,4}be\s{1,4}completed(?:\s{0,4}\(([^)]{0,80})\))?/i;
+const COVERAGE_HEADER = /coverage\s{1,4}check(?:\s{0,4}\(([^)]{0,80})\))?\s{0,4}:/i;
+/** A bullet naming one rotation slot. `next primary` must precede `primary`. */
+const COVERAGE_ROLE =
+  /^[*\-•\s]{1,6}(next\s{1,4}primary|next\s{1,4}secondary|primary|secondary)\b(.{0,160})$/i;
+const COVERAGE_OUT =
+  /out\s{1,4}of\s{1,4}office\b[^0-9]{0,24}(\d{4}-\d{2}-\d{2})\s{0,4}(?:→|->|-|to)\s{0,4}(\d{4}-\d{2}-\d{2})/i;
+const COVERAGE_UNCHECKED = /could\s{1,4}not\s{1,4}be\s{1,4}checked/i;
+const COVERAGE_AVAILABLE = /\bavailable\b/i;
+const COVERAGE_OPEN_ENDED = /open[\s-]{0,2}ended/i;
+/** How far past the header to look for bullets before giving up. */
+const COVERAGE_BLOCK_LINES = 12;
+
+const ROLE_KEYS: Record<string, CoverageRole> = {
+  primary: CoverageRole.Primary,
+  secondary: CoverageRole.Secondary,
+  nextprimary: CoverageRole.NextPrimary,
+  nextsecondary: CoverageRole.NextSecondary,
+};
+
+const unknownRoles = (): Record<CoverageRole, CoverageEntry> => ({
+  [CoverageRole.Primary]: { state: Coverage.Unknown },
+  [CoverageRole.Secondary]: { state: Coverage.Unknown },
+  [CoverageRole.NextPrimary]: { state: Coverage.Unknown },
+  [CoverageRole.NextSecondary]: { state: Coverage.Unknown },
+});
+
+/** Strip markdown emphasis and escapes without the link pass `clean` also does. */
+function flattenLine(line: string): string {
+  return line
+    .replace(/\s+/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/\\/g, "")
+    .trim();
+}
+
+export function parseCoverage(
+  md: string,
+  tz: string,
+): PageCoverage | undefined {
+  const lines = md.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = flattenLine(lines[i]);
+    if (!line) continue;
+
+    // Checked before the header: the failure sentence also matches COVERAGE_HEADER.
+    const failed = COVERAGE_FAILED.exec(line);
+    if (failed) {
+      return {
+        unavailableReason: clean(failed[1] ?? "") || "reason not stated",
+        roles: unknownRoles(),
+      };
+    }
+
+    const header = COVERAGE_HEADER.exec(line);
+    if (!header) continue;
+
+    const roles = unknownRoles();
+    for (let j = i + 1; j < Math.min(lines.length, i + 1 + COVERAGE_BLOCK_LINES); j++) {
+      const raw = lines[j];
+      if (/^\s*#/.test(raw)) break; // a heading ends the block
+      const bullet = flattenLine(raw).replace(/^_+|_+$/g, "").trim();
+      if (!bullet) continue;
+
+      const m = COVERAGE_ROLE.exec(bullet);
+      if (!m) continue;
+
+      const key = m[1].toLowerCase().replace(/\s+/g, "");
+      const role = ROLE_KEYS[key];
+      if (!role) continue;
+
+      roles[role] = coverageEntry(m[2], bullet, tz);
+    }
+
+    return { checkedAt: clean(header[1] ?? "") || undefined, roles };
+  }
+
+  return undefined;
+}
+
+function coverageEntry(rest: string, evidence: string, tz: string): CoverageEntry {
+  const out = COVERAGE_OUT.exec(rest);
+  if (out) {
+    const from = DateTime.fromISO(out[1], { zone: tz }).startOf("day");
+    const to = DateTime.fromISO(out[2], { zone: tz }).endOf("day");
+    return {
+      state: Coverage.OutOfOffice,
+      from: from.isValid ? from.toJSDate() : undefined,
+      to: to.isValid ? to.toJSDate() : undefined,
+      openEnded: COVERAGE_OPEN_ENDED.test(rest) || undefined,
+      evidence,
+    };
+  }
+  // "could not be checked" is deliberately tested before "available", so a line
+  // saying both never reads as available.
+  if (COVERAGE_UNCHECKED.test(rest)) {
+    return { state: Coverage.Unknown, evidence };
+  }
+  if (COVERAGE_AVAILABLE.test(rest)) {
+    return { state: Coverage.Available, evidence };
+  }
+  // A bullet we cannot classify is Unknown, never Available.
+  return { state: Coverage.Unknown, evidence };
 }
 
 // ── On-call schedule ────────────────────────────────────────────────────────
@@ -563,6 +693,7 @@ export function parseConfluence(
   const schedule = parseOnCall(handoffMd);
   const kpis = parseKpis(handoffMd);
   const pageRefresh = parseRefreshedAt(handoffMd, tz);
+  const coverage = parseCoverage(handoffMd, tz);
   const recommendations = parseRecommendations(handoffMd);
   const alerts = [
     ...parseRequiredAttention(handoffMd, tz),
@@ -582,6 +713,7 @@ export function parseConfluence(
     kpis: kpis ?? undefined,
     window,
     pageRefresh,
+    coverage,
     sourceStatus: {
       datadog: SourceStatus.Skipped,
       incidentio: SourceStatus.Skipped,

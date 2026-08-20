@@ -22,8 +22,10 @@ import { acquireLock, releaseLock } from "@/lib/ingest/lock";
 import type {
   IngestBundle,
   NormalizedSchedule,
+  PageCoverage,
   PageRefresh,
 } from "@/lib/ingest/types";
+import { serializeCoverage } from "@/lib/people/coverage";
 
 export interface RunOptions {
   trigger?: Trigger;
@@ -115,6 +117,27 @@ function refreshWarnings(pageRefresh?: PageRefresh): string[] {
   if (!pageRefresh.at) {
     return [
       `handoff: refresh stamp "${pageRefresh.text}" could not be resolved to a time.`,
+    ];
+  }
+  return [];
+}
+
+/**
+ * The coverage check is free prose too, and a missing one renders as "unknown" for
+ * every role — which is correct but silent. Report it, so a reworded or skipped
+ * check surfaces instead of the banner quietly saying nothing forever.
+ */
+function coverageWarnings(coverage?: PageCoverage): string[] {
+  if (!coverage) {
+    return [
+      'handoff: no "Coverage check" block on the page — nobody\'s availability could be ' +
+        "verified. Check the wording against on-call.md.",
+    ];
+  }
+  if (coverage.unavailableReason) {
+    return [
+      `handoff: the coverage check did not complete (${coverage.unavailableReason}) — ` +
+        "verify the rotation's availability manually.",
     ];
   }
   return [];
@@ -227,7 +250,12 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
 
     const warnings = [
       ...scheduleWarnings(newest.schedule),
-      ...(source === "confluence" ? refreshWarnings(newest.pageRefresh) : []),
+      ...(source === "confluence"
+        ? [
+            ...refreshWarnings(newest.pageRefresh),
+            ...coverageWarnings(newest.coverage),
+          ]
+        : []),
     ];
 
     const notesParts = [
@@ -259,6 +287,9 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
         onCallVerifiedAsOf: newest.schedule?.verifiedAsOf,
         handoffRefreshedAt: newest.pageRefresh?.at,
         handoffRefreshedText: newest.pageRefresh?.text,
+        coverageJson: newest.coverage
+          ? serializeCoverage(newest.coverage)
+          : null,
         ...(result?.kpis ?? {}),
       },
     });

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { DateTime } from "luxon";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { Coverage, CoverageRole } from "@/lib/constants";
 import {
+  parseCoverage,
   parseOnCall,
   parseRefreshedAt,
   parseWindow,
@@ -348,3 +351,172 @@ describe("parseRefreshedAt", () => {
     }
   });
 });
+
+/*
+ * The coverage check tells the dashboard whether a named on-call is actually
+ * available. Two failure modes are worse than not shipping it: reading a page with
+ * no check as "everyone is available", and picking up ordinary prose elsewhere on
+ * the page as a coverage verdict. Both are pinned below.
+ */
+describe("parseCoverage", () => {
+  it("reads a role marked out of office with a date range", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    const primary = coverage?.roles[CoverageRole.Primary];
+    assert.equal(primary?.state, Coverage.OutOfOffice);
+    // Compared in the team zone, not UTC: `to` is the END of the last day, so an
+    // absence through Aug 22 PT is Aug 23 in UTC. That end-of-day boundary is what
+    // makes someone out "20 → 22" still count as absent on the 22nd.
+    assert.equal(zoned(primary?.from), "2026-08-20");
+    assert.equal(zoned(primary?.to), "2026-08-22");
+  });
+
+  it("reads a role marked available", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    assert.equal(
+      coverage?.roles[CoverageRole.Secondary].state,
+      Coverage.Available,
+    );
+  });
+
+  it("tells next primary apart from primary", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    assert.equal(
+      coverage?.roles[CoverageRole.NextPrimary].state,
+      Coverage.OutOfOffice,
+    );
+    assert.equal(zoned(coverage?.roles[CoverageRole.NextPrimary].from), "2026-08-25");
+  });
+
+  it("notes an open-ended absence", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    assert.equal(coverage?.roles[CoverageRole.NextPrimary].openEnded, true);
+  });
+
+  it("reads the check timestamp verbatim", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    assert.equal(
+      coverage?.checkedAt,
+      "Slack out-of-office, as of 2026-08-20 8:00 AM PT",
+    );
+  });
+
+  it("reports unknown for a role the block explicitly could not check", () => {
+    const coverage = parseCoverage(coverageBlock(), TZ);
+
+    assert.equal(
+      coverage?.roles[CoverageRole.NextSecondary].state,
+      Coverage.Unknown,
+    );
+  });
+
+  it("reports unknown for a role the block does not mention", () => {
+    const coverage = parseCoverage(
+      "_Coverage check (as of 2026-08-20):_\n* Primary **Ada Lovelace** — available",
+      TZ,
+    );
+
+    assert.equal(coverage?.roles[CoverageRole.Primary].state, Coverage.Available);
+    assert.equal(coverage?.roles[CoverageRole.Secondary].state, Coverage.Unknown);
+  });
+
+  it("reports unknown for every role when the check could not be completed", () => {
+    const coverage = parseCoverage(
+      "_Coverage check: could not be completed (Slack unreachable) — verify manually._",
+      TZ,
+    );
+
+    assert.equal(coverage?.unavailableReason, "Slack unreachable");
+    for (const role of Object.values(CoverageRole)) {
+      assert.equal(coverage?.roles[role].state, Coverage.Unknown, role);
+    }
+  });
+
+  it("returns undefined when the page carries no coverage check", () => {
+    assert.equal(
+      parseCoverage("# Growth Team Ops Review — Weekly Handoff", TZ),
+      undefined,
+    );
+  });
+
+  // The honesty case: a missing block must be distinguishable from "all clear".
+  it("does not treat a missing block as everyone being available", () => {
+    const coverage = parseCoverage("No coverage information on this page.", TZ);
+
+    assert.equal(coverage, undefined, "a missing block must not parse as available");
+  });
+
+  it("does not read a role bullet outside the block as a coverage verdict", () => {
+    const coverage = parseCoverage(
+      "_Coverage check (as of 2026-08-20):_\n" +
+        "* Primary **Ada Lovelace** — available\n" +
+        "\n## Alerts\n" +
+        "* Primary **Grace Hopper** — out of office **2026-08-20 → 2026-08-29**\n",
+      TZ,
+    );
+
+    assert.equal(
+      coverage?.roles[CoverageRole.Primary].state,
+      Coverage.Available,
+      "the bullet after the heading must not override the block",
+    );
+  });
+
+  it("does not read coverage prose elsewhere on the page as a check", () => {
+    assert.equal(
+      parseCoverage(
+        "Coverage of the duplicate-funnel monitor improved this week.\n" +
+          "* Primary **Ada Lovelace** — acked in 13 s\n",
+        TZ,
+      ),
+      undefined,
+    );
+  });
+
+  it("stays fast on input built to trigger regex backtracking", () => {
+    const started = Date.now();
+    parseCoverage(`coverage check${" ".repeat(6_000)}:`, TZ);
+    parseCoverage(`* primary ${"x".repeat(9_000)}`, TZ);
+    parseCoverage("coverage check : ".repeat(3_000), TZ);
+
+    assert.ok(
+      Date.now() - started < 1_000,
+      `parseCoverage took ${Date.now() - started}ms on adversarial input`,
+    );
+  });
+
+  // Guards the corpus both ways: pages published before this feature must yield
+  // nothing, and any page that does carry a block must parse.
+  it("parses the coverage block in every handoff page that has one", () => {
+    const dir = join(process.cwd(), "data", "confluence");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    assert.ok(files.length > 0, "no handoff pages found to check");
+
+    for (const file of files) {
+      const md = readFileSync(join(dir, file), "utf8");
+      const coverage = parseCoverage(md, TZ);
+
+      if (!/coverage\s+check/i.test(md)) {
+        assert.equal(coverage, undefined, `${file}: invented a check on a page without one`);
+        continue;
+      }
+      assert.ok(coverage, `${file}: page states a coverage check but none was parsed`);
+    }
+  });
+});
+
+/** Calendar date in the team timezone — `asDate` renders UTC, which shifts end-of-day. */
+const zoned = (d?: Date) =>
+  d ? DateTime.fromJSDate(d, { zone: TZ }).toISODate() : undefined;
+
+const coverageBlock = () =>
+  "_This on-call week — primary: **Ada Lovelace**; secondary: **Grace Hopper**._\n" +
+  "_Coverage check (Slack out-of-office, as of 2026-08-20 8:00 AM PT):_\n" +
+  "* Primary **Ada Lovelace** — out of office **2026-08-20 → 2026-08-22**\n" +
+  "* Secondary **Grace Hopper** — available\n" +
+  "* Next primary **Alan Turing** — out of office **2026-08-25 → 2026-08-29** (open-ended)\n" +
+  "* Next secondary **Ada Lovelace** — could not be checked\n";

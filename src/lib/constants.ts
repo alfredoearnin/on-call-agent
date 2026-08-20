@@ -165,3 +165,24 @@ export const TriggerStatus = {
   Blocked: "blocked",
 } as const;
 export type TriggerStatus = (typeof TriggerStatus)[keyof typeof TriggerStatus];
+
+/**
+ * Availability of a rotation member, from the handoff page's coverage check.
+ * `Unknown` is load-bearing: the page carrying no check, or a check that failed,
+ * must never read as "available".
+ */
+export const Coverage = {
+  Available: "available",
+  OutOfOffice: "out_of_office",
+  Unknown: "unknown",
+} as const;
+export type Coverage = (typeof Coverage)[keyof typeof Coverage];
+
+/** The four rotation slots the coverage check reports on. */
+export const CoverageRole = {
+  Primary: "primary",
+  Secondary: "secondary",
+  NextPrimary: "nextPrimary",
+  NextSecondary: "nextSecondary",
+} as const;
+export type CoverageRole = (typeof CoverageRole)[keyof typeof CoverageRole];

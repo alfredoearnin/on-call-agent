@@ -1,4 +1,6 @@
 import type {
+  Coverage,
+  CoverageRole,
   Priority,
   MonitorState,
   AlertDisposition,
@@ -137,6 +139,31 @@ export interface PageRefresh {
   dateOnly?: boolean;
 }
 
+/** One rotation slot's availability, as the handoff page's coverage check stated it. */
+export interface CoverageEntry {
+  state: Coverage;
+  /** First day of the absence, in the team timezone. */
+  from?: Date;
+  /** Last day of the absence, end-of-day so a same-day range still overlaps. */
+  to?: Date;
+  /** The page said the Slack status had no expiry, so `to` is the week end. */
+  openEnded?: boolean;
+  /** The page's own sentence, kept for rendering verbatim. */
+  evidence?: string;
+}
+
+/**
+ * The handoff page's coverage check. Records only WHO is out and WHICH dates —
+ * never a reason (see the redaction rules in on-call.md).
+ */
+export interface PageCoverage {
+  /** When the check ran, verbatim as the page wrote it. */
+  checkedAt?: string;
+  /** Set when the check itself could not be completed (e.g. Slack unreachable). */
+  unavailableReason?: string;
+  roles: Record<CoverageRole, CoverageEntry>;
+}
+
 /** Pre-computed KPI numbers (e.g. parsed from the Confluence summary). When
  * present, persistBundle uses these instead of computing from the alert set. */
 export interface KpiOverride {
@@ -163,6 +190,8 @@ export interface IngestBundle {
   window?: { start: Date; end: Date };
   /** The page's "Last refreshed" stamp. Absent on pages published before it existed. */
   pageRefresh?: PageRefresh;
+  /** The page's coverage check. Absent on pages published before it existed. */
+  coverage?: PageCoverage;
   sourceStatus: {
     datadog: SourceStatus;
     incidentio: SourceStatus;
