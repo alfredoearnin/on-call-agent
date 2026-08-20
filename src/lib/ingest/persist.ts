@@ -162,6 +162,7 @@ export async function persistBundle(
         disposition: a.disposition,
         firingKind: a.firingKind,
         firedAt: a.firedAt,
+        firedAtTimeKnown: a.firedAtTimeKnown ?? true,
         resolvedAt: a.resolvedAt,
         ackedBy: a.ackedBy,
         ackLatencySec: a.ackLatencySec,
@@ -181,6 +182,11 @@ export async function persistBundle(
         status: a.status,
         disposition: a.disposition,
         firingKind: a.firingKind,
+        // Re-read from the page every run rather than frozen at first sight:
+        // firedAt is a fact about the world that the page restates daily, so an
+        // improved parse (or a corrected page) must be able to fix a bad value.
+        firedAt: a.firedAt,
+        firedAtTimeKnown: a.firedAtTimeKnown ?? true,
         resolvedAt: a.resolvedAt,
         ackedBy: a.ackedBy,
         ackLatencySec: a.ackLatencySec,

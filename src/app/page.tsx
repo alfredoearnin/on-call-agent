@@ -13,6 +13,10 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/kpi-card";
 import { TrendChart } from "@/components/trend-chart";
 import { OnCallBanner } from "@/components/on-call-banner";
+import {
+  assessCoverage,
+  deserializeCoverage,
+} from "@/lib/people/coverage";
 import { fmtDate, fmtDateTime, statusTone, statusLabel, trendArrow } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +31,7 @@ export default async function OverviewPage() {
     getSyncSettings(),
   ]);
   const tz = settings?.timezone ?? cfg.team.timezone;
+  const now = new Date();
 
   if (!run) {
     return (
@@ -67,6 +72,11 @@ export default async function OverviewPage() {
         windowStart={run.windowStart}
         windowEnd={run.windowEnd}
         tz={tz}
+        coverage={assessCoverage({
+          coverage: deserializeCoverage(run.coverageJson),
+          now,
+        })}
+        now={now}
       />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

@@ -1,10 +1,12 @@
+import { AutomationKey } from "@/lib/constants";
+
 /**
  * Central configuration, mirroring the YAML block in on-call.md (lines 48-88).
  * Values come from the environment with the on-call.md defaults as fallbacks.
  * Server-only module.
  */
 
-function str(key: string, fallback: string): string {
+export function str(key: string, fallback: string): string {
   const v = process.env[key];
   return v === undefined || v === "" ? fallback : v;
 }
@@ -61,6 +63,37 @@ export interface AppConfig {
   apply: {
     enabled: boolean;
     operator: string;
+  };
+  /**
+   * The two Cursor Automations that produce this dashboard's data.
+   *
+   * NON-SECRET ONLY. The webhook URL and API key that can actually start a run
+   * live in `src/lib/automations/secrets.ts`, which is `server-only`. Keeping
+   * them out of AppConfig is structural: getConfig() is called in every Server
+   * Component, so a stray `{...cfg}` spread into a client component would
+   * otherwise publish a private endpoint.
+   */
+  automations: {
+    /** The daily slot both automations run in. */
+    hour: number;
+    minute: number;
+    /**
+     * IANA zone the slot is expressed in. Deliberately NOT team.timezone: the
+     * automations are scheduled at 9AM CST while the dashboard displays in PT.
+     */
+    timezone: string;
+    /**
+     * How long after the slot a run may still legitimately be in flight. Measured
+     * on origin/main: the refresh commit lands 60-160 min after the slot, so a
+     * shorter window would read as a failure every morning.
+     */
+    graceMinutes: number;
+    /** Header the webhook API key is sent in. Cursor's docs do not name it. */
+    authHeader: string;
+    /** Optional scheme prefix, e.g. "Bearer" when the header is Authorization. */
+    authScheme: string;
+    /** cursor.com links, safe to render. */
+    consoleUrl: Record<AutomationKey, string>;
   };
   cronSecret: string;
   /** Noise/tuning thresholds (on-call.md lines 76-88). */
@@ -137,6 +170,24 @@ export function getConfig(): AppConfig {
       enabled: bool("APPLY_ENABLED", false),
       operator: str("OPERATOR_NAME", "local-operator"),
     },
+    automations: {
+      hour: int("AUTOMATION_HOUR", 9),
+      minute: int("AUTOMATION_MINUTE", 0),
+      timezone: str("AUTOMATION_TIMEZONE", "America/Chicago"),
+      graceMinutes: int("AUTOMATION_GRACE_MINUTES", 180),
+      authHeader: str("CURSOR_WEBHOOK_AUTH_HEADER", "x-api-key"),
+      authScheme: str("CURSOR_WEBHOOK_AUTH_SCHEME", ""),
+      consoleUrl: {
+        [AutomationKey.HealthCheck]: str(
+          "CURSOR_HEALTH_CHECK_URL",
+          "https://cursor.com/automations/26df3cd5-bf0c-4b4c-ba6a-95e18eab3c69",
+        ),
+        [AutomationKey.DashboardRefresh]: str(
+          "CURSOR_DASHBOARD_REFRESH_URL",
+          "https://cursor.com/automations/ea0cbef2-8467-11f1-a7d1-d6b4613131ce",
+        ),
+      },
+    },
     cronSecret: str("CRON_SECRET", ""),
     thresholds: {
       noiseMinFiresPerWeek: int("NOISE_MIN_FIRES_PER_WEEK", 3),
@@ -175,4 +226,12 @@ export function hasConfluence(cfg: AppConfig): boolean {
 /** True when the guarded apply write path is fully enabled. */
 export function canApply(cfg: AppConfig): boolean {
   return cfg.apply.enabled && Boolean(cfg.datadog.appKeyWrite);
+}
+
+/**
+ * True when this install is fed by the two cloud Cursor Automations. In demo and
+ * live mode there are no automations to judge, so the health card renders nothing.
+ */
+export function hasCloudAutomations(cfg: AppConfig): boolean {
+  return cfg.syncSource === "confluence" || cfg.syncSource === "auto";
 }

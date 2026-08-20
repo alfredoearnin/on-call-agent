@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { priorityTone, fmtDateTime, fmtDate } from "@/lib/format";
+import { LocalTime } from "@/components/local-time";
 import { FindingDetail } from "@/components/finding-detail";
 import { FiringKind } from "@/lib/constants";
 
@@ -12,6 +13,7 @@ interface AlertLike {
   status: string;
   firingKind: string | null;
   firedAt: Date;
+  firedAtTimeKnown?: boolean;
   resolvedAt: Date | null;
   ackedBy: string | null;
   escalationStatus: string | null;
@@ -44,10 +46,25 @@ export function AlertCard({ alert, tz }: { alert: AlertLike; tz: string }) {
         {isStale ? (
           <span>firing since {fmtDate(alert.firedAt, tz)} (not fired this week)</span>
         ) : (
-          <span>fired: {fmtDateTime(alert.firedAt, tz)}</span>
+          <span>
+            fired:{" "}
+            <LocalTime
+              iso={new Date(alert.firedAt).toISOString()}
+              fallback={fmtDateTime(alert.firedAt, tz)}
+              variant="datetime"
+              timeKnown={alert.firedAtTimeKnown ?? true}
+            />
+          </span>
         )}
         {alert.resolvedAt && !isStale && (
-          <span>resolved: {fmtDateTime(alert.resolvedAt, tz)}</span>
+          <span>
+            resolved:{" "}
+            <LocalTime
+              iso={new Date(alert.resolvedAt).toISOString()}
+              fallback={fmtDateTime(alert.resolvedAt, tz)}
+              variant="datetime"
+            />
+          </span>
         )}
         {alert.ackedBy && <span>acked by: {alert.ackedBy}</span>}
       </div>

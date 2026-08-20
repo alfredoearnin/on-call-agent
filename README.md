@@ -76,6 +76,46 @@ for the *On-call dashboard — daily refresh* automation.
 
 ---
 
+## Out-of-office warnings
+
+Someone named on-call who is on PTO is the gap that becomes an unanswered page, so the
+banner warns when the rotation is not actually covered.
+
+**The agent does the lookup, not the dashboard.** `on-call.md` Step 1 has the Health
+Check agent resolve the rotation from incident.io, then check each name's Slack status
+and write the result into the page as a fixed-format `Coverage check` block. The
+dashboard parses that block like any other prose on the page. **No Slack credential
+lives in the dashboard** — same principle as Confluence: the agent holds the
+credentials, the page carries the facts, the dashboard reads markdown.
+
+Slack status is the signal because the employee handbook already mandates it: *"please
+ensure you notify the company by updating your status in Slack and setting your OOO
+email."* Slack's Google Calendar app also sets the status automatically when an event
+title contains "OOO" or "PTO", so this is not purely a matter of remembering. Workday
+is the system of record for time off, but has no connector here and sits behind SSO.
+
+Three states, and the third matters:
+
+| State | Meaning |
+| --- | --- |
+| available | The page's coverage check reported this person as available. |
+| out of office | An absence that is under way or still to come. The banner names them and says *until* or *from*. |
+| **unknown** | The page carried no coverage check, the check failed, or it did not mention this role. **Absence of a check is never rendered as "available."** |
+
+An absence whose dates have already passed reads as available — a lapsed absence is not
+absence. A page published before this feature existed shows nothing at all rather than
+nagging about every historical week, while a check that *tried and failed* shows
+"Coverage could not be checked" so a broken lookup is visible instead of looking like
+good news. `npm run ingest` prints a `handoff:` warning in both of the latter cases.
+
+**Privacy.** The handoff page is committed to git, so anything written there is
+permanent and in every clone. The prompt therefore records only **who** is out and
+**which dates** — never the reason, the leave type, a verbatim Slack status, or any
+medical or personal detail. That is coverage information of the same character as the
+shift windows the page already carries.
+
+---
+
 ## Data sources / modes
 
 Selected by `SYNC_SOURCE` (default `auto`):
@@ -97,8 +137,9 @@ cloud by the daily-refresh automation, which drops the markdown into
 
 - **Overview** — KPIs (alert volume + run-rate trend, active/stale firing,
   escalation rate, open recommendations), a colored **on-call banner** (primary in
-  green, secondary in blue, next handoff), the alert-volume trend chart, top tuning
-  recommendations, SLO links, and vulnerabilities.
+  green, secondary in blue, next handoff, plus **out-of-office warnings** — see
+  below), the alert-volume trend chart, top tuning recommendations, SLO links, and
+  vulnerabilities.
 - **Daily** — incidents & alerts scoped to a whole **week** or a single **day**
   (two selectors), in either a **List** view (grouped by disposition) or a
   **Timeline** view (grouped by day). Every alert shows a **TL;DR** + a collapsible
@@ -107,7 +148,9 @@ cloud by the daily-refresh automation, which drops the markdown into
   (Datadog reads OK/No Data) that need a manual clear.
 - **Recommendations** / **Monitors** — the learned tuning recommendations and
   per-monitor detail, with the guarded Apply/Revert path.
-- **Settings** — data source + freshness, sync history, and refresh controls.
+- **Settings** — data source + freshness, **cloud automations** (per-automation
+  health inferred from local evidence, plus a guarded Re-run button), sync history,
+  and refresh controls.
 
 ---
 
@@ -161,6 +204,42 @@ The real daily refresh runs in the cloud via **two Cursor Automations**:
 To pull that result into the running dashboard, click **Refresh from source** on the
 Settings page (it runs `git pull` and reconnects the DB) — or run `git pull` yourself.
 
+### Re-running an automation from the dashboard
+
+Settings has a **Cloud automations** card showing both automations, each with a
+health verdict and a **Re-run** button. Re-run POSTs the automation's Cursor
+**webhook trigger**, so the real automation runs with its own MCP servers and
+secrets — the dashboard never holds Datadog, incident.io, or Atlassian credentials.
+
+**Order matters.** Re-run **step 1** first, wait for its Confluence page, then
+**step 2**. The dashboard warns you if you fire step 2 within 20 minutes of step 1,
+but it will not stop you: nothing is chained, timed, or polled.
+
+**The buttons cannot tell you a run succeeded.** Cursor exposes no API to read an
+automation's run status ([open feature
+request](https://forum.cursor.com/t/automations-api/166898)), and a webhook POST
+returns no run id. A success message means Cursor *accepted* the request. Use
+**Open in Cursor** for the actual run history.
+
+**Health is inferred from local evidence**, since Cursor will not tell us:
+
+| State | Meaning |
+| --- | --- |
+| `healthy` | Positive evidence of today's run — a `Daily refresh <today>` commit on `origin/main`, or a page stamped today. |
+| `pending` | Due, but the grace window (slot + `AUTOMATION_GRACE_MINUTES`) has not closed. Nothing is wrong. |
+| `failed` | The grace window closed, the evidence channel was readable, and the evidence is absent. The only state that accuses an automation. |
+| `unknown` | The evidence channel itself could not be read — origin was not fetched since the deadline, the page carries no `Last refreshed` stamp, or `git` failed. **Absence of evidence, not evidence of failure.** |
+
+Two consequences worth knowing. The health check reads `unknown` whenever the
+daily refresh has not landed, because today's page was never fetched into this
+repo — the dashboard will not blame step 1 for step 2's failure. And the render
+never fetches from origin, so a stale local view reads `unknown` rather than
+`failed`; click **Refresh from source** to look again.
+
+**Setup:** open the automation in Cursor, add a **Webhook trigger**, and **save** —
+Cursor generates the URL and API key only after saving. Put both in `.env.local`.
+Without them the buttons stay disabled and everything else still works.
+
 You can also re-process without the cloud:
 
 - **Sync now** (top bar) or `npm run ingest` — re-parses the **local**
@@ -191,7 +270,12 @@ documents everything.
 | `APPLY_ENABLED` | no | `true` unlocks the Apply-suggestion write path. Default `false`. |
 | `DD_APP_KEY_WRITE` | apply only | Datadog **write**-scoped app key (separate from the read key). |
 | `CRON_SECRET` | hosted auto | Guards the `/api/ingest` route used by a scheduler. |
-| `OPERATOR_NAME` | no | Name recorded in the apply audit trail. |
+| `OPERATOR_NAME` | no | Name recorded in the apply + trigger audit trails. |
+| `CURSOR_HEALTH_CHECK_WEBHOOK_URL` / `_API_KEY` | re-run only | Webhook trigger for the Health Check automation (**secrets**). |
+| `CURSOR_DASHBOARD_REFRESH_WEBHOOK_URL` / `_API_KEY` | re-run only | Webhook trigger for the daily-refresh automation (**secrets**). |
+| `CURSOR_WEBHOOK_AUTH_HEADER` / `_SCHEME` | no | Header the webhook key is sent in (default `x-api-key`, no scheme). Change if you get 401s. |
+| `CURSOR_HEALTH_CHECK_URL` / `CURSOR_DASHBOARD_REFRESH_URL` | no | cursor.com links shown on Settings (non-secret). |
+| `AUTOMATION_HOUR` / `_MINUTE` / `_TIMEZONE` / `_GRACE_MINUTES` | no | The automations' daily slot (default 9:00 `America/Chicago`, 180 min grace) used for the health verdict. |
 
 Confluence and demo modes need **no** Datadog/incident.io/Jira keys — those are only
 for `live` mode and the Apply write path.
@@ -274,6 +358,28 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   `SYNC_SOURCE=live`; a missing/unauthorized source degrades gracefully and is
   reported on the Settings page rather than failing the whole run.
 - **Apply button disabled** — set `APPLY_ENABLED=true` and `DD_APP_KEY_WRITE`.
+- **No out-of-office warnings ever appear** — almost always the two-copy rule: the
+  `Coverage check` step was added to this repo's `on-call.md` but not pasted into the
+  Health Check automation's Agent Instructions, so published pages carry no block.
+  `npm run ingest` prints `handoff: no "Coverage check" block on the page` when that is
+  the case.
+- **A rotation member shows no out-of-office state** — the agent could not resolve them
+  in Slack, or the block did not mention that role. It reads *unknown*, never
+  *available*; check the page's `Coverage check` block for a `could not be checked` line.
+- **An automation reads `unknown`** — the dashboard could not read the evidence, so
+  it is not claiming a failure. Usually origin has not been fetched since today's
+  deadline: click **Refresh from source**. It also reads `unknown` when the handoff
+  page carries no `Last refreshed` stamp (`npm run ingest` prints a `handoff:`
+  warning then) or when `git log origin/main` failed.
+- **An automation reads `failed` every morning** — the grace window is too short for
+  how long the run actually takes. Raise `AUTOMATION_GRACE_MINUTES`.
+- **Re-run button disabled** — that automation has no webhook URL + API key in
+  `.env.local`. Add a **Webhook trigger** to it in Cursor and save first.
+- **Re-run returns a 401** — the key is being sent in the wrong header. Try
+  `CURSOR_WEBHOOK_AUTH_HEADER=X-Api-Key`, then `x-cursor-api-key`, then
+  `Authorization` with `CURSOR_WEBHOOK_AUTH_SCHEME=Bearer`.
+- **`no such table: AutomationTrigger`** — run `npm run prisma:migrate` (or pull the
+  migration) and restart the dev server so it picks up the regenerated client.
 
 ---
 

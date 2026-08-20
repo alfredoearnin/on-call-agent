@@ -1,5 +1,14 @@
 # Growth Team Ops Review — Weekly Handoff Agent (Confluence edition)
 
+> **Version:** 2026-08-20 (retry on failure). Changes vs prior: added a **Retry policy**
+> that splits reads from writes — reads still degrade gracefully, but every write
+> (weekly page, ledger, Slack) now retries 4 times with backoff, re-searching before
+> each retry so it can never create a duplicate page. The weekly page write is now
+> **verified** by re-reading its "Last refreshed" stamp rather than trusting a 2xx, and
+> a run that cannot publish it posts an explicit `:x:` failure to Slack instead of the
+> normal summary. Prompted by the 2026-08-18 run, which degraded past a Confluence
+> `needsAuth`, published no page, and reported success anyway.
+>
 > **Version:** 2026-07-20 (per-item TL;DR). Changes vs prior: every alert **Agent Finding** and
 > every **incident** now leads with a one-sentence **TL;DR** followed by a **What happened** detail
 > block, so the handoff (and the dashboard that parses it) can show a skim summary plus an
@@ -162,8 +171,8 @@ body before overwriting — including the **Tuning Ledger** page for memory),
 Vulnerabilities: `searchJiraIssuesUsingJql`.
 
 **Slack** (`plugin-slack-slack`): `slack_search_channels`, `slack_search_public_and_private`
-(to find this week's root message), `slack_send_message_draft` → `slack_send_message`,
-`slack_search_users` + `slack_read_user_profile` (read-only, for the coverage check in Step 1).
+(to find this week's root message), `slack_send_message_draft` → `slack_send_message`.
+`slack_search_users` + `slack_read_user_profile` (read-only, for the Step 1 coverage check).
 
 ---
 
@@ -374,7 +383,15 @@ next step.
 - Fallback: if `createConfluencePage` rejects `parentId` because it points to a folder, retry
   the create **without `parentId`** (page lands at the space root) and note in the run output
   that the page wasn't nested in the folder so the user can move it.
-- Capture the returned page **URL**.
+- The create/update here is a **write**, so it gets the full Retry policy: 4 attempts
+  with backoff, re-running the find-or-create search before each one so a retry can
+  never produce a second page for the same week.
+- Capture the returned page **URL**, then **verify the write actually landed**:
+  `getConfluencePage` on the returned id and confirm its "Last refreshed" stamp is
+  the one you just wrote. A 2xx response is not proof. That stamp is what the
+  dashboard and the daily-refresh automation read to decide whether today's run
+  happened, so if it still shows an older time the write did not take — treat it as
+  a failed attempt and retry.
 
 **Page body (HTML, `contentFormat: "html"`) — reproduce the Ops Review agenda exactly, in this order:**
 
@@ -388,23 +405,8 @@ next step.
      week's page.`
 1. **Header** — `<h1>` `"Growth Team Ops Review — Weekly Handoff"`; `<p>` with
    `MM/DD/YYYY Growth Team Ops Review`, the window dates, source ("incident.io + Datadog,
-   read-only"), and "Last refreshed: <now> <timezone>".
-   - **Rotation line — fixed wording.** The dashboard parses this sentence to fill the
-     "On-call this week" banner, so write it verbatim in this shape, on its own line:
-
-     `_This on-call week — primary: **<name>**; secondary: **<name>** (shift <start> → <end>;
-     verified live via_ `schedule_show`_). Next handoff <date>: primary **<name>**, secondary
-     **<name>**._`
-
-     Keep `primary:` and `secondary:` with their colons, separated by a semicolon. Names from
-     `schedule_show`.
-   - **When `schedule_show` is unavailable** (incident.io down), do **not** drop the names and
-     do **not** invent them — carry the last known rotation forward and say so, in this shape:
-
-     `Last verified (<date>): Primary **<name>**, Secondary **<name>**.`
-
-     The dashboard recognises this as unverified and flags the banner accordingly. State the
-     reason in the same sentence (e.g. "incident.io connector down").
+   read-only"), and "Last refreshed: <now> <timezone>". Include the on-call name(s) from
+   `schedule_show` (current primary + next).
    - **Coverage check — fixed wording.** Someone named on-call who is on PTO is the gap that
      becomes an unanswered page, so check availability and state it. For each of the four
      rotation names (primary, secondary, next primary, next secondary): resolve the person with
@@ -413,7 +415,7 @@ next step.
      `:desert_island:`, `:airplane:`, `:ooo:`) **or** the status text contains OOO, PTO,
      vacation, out of office, annual leave, or holiday. A status whose expiry has already
      passed is **not** absence. Write the result verbatim in this shape, on its own lines,
-     directly beneath the rotation line:
+     directly beneath the on-call names:
 
      `_Coverage check (Slack out-of-office, as of <now> <timezone>):_`
      `* Primary **<name>** — out of office **<YYYY-MM-DD> → <YYYY-MM-DD>**`
@@ -426,17 +428,15 @@ next step.
      - **Always write the header line when the check runs**, even when everyone is available.
        Its absence is how the dashboard tells "everyone is available" apart from "the check
        never happened", and those must not look the same.
-     - **When Slack cannot be reached, say so and do not guess** — same discipline as the
-       rotation line above:
+     - **When Slack cannot be reached, say so and do not guess:**
 
        `_Coverage check: could not be completed (Slack unreachable) — verify availability manually._`
 
        Do the same for a single person you cannot resolve: write
        `* Primary **<name>** — could not be checked` rather than assuming they are available.
      - **Record only the fact of absence and its dates.** Never the reason, the leave type, or
-       any medical or personal detail — see the redaction rules in "Privacy / PII" above. If
-       the Slack status has no expiry, use the on-call week's end date and add
-       `(open-ended)` after the range.
+       any medical or personal detail — see the redaction rules above. If the Slack status has
+       no expiry, use the on-call week's end date and add `(open-ended)` after the range.
 2. **`<h2>` SLOs / SLAs (15 minutes)** — links **and** the auto-summary live **here**, before
    Incidents (verify ordering in the published page; don't let them drift below later sections).
    - Bulleted links: Consolidated PENG-Growth Dashboard (`dashboard_url`), PENG Bugs OOSLA
@@ -509,7 +509,20 @@ folder; `updateConfluencePage` if found, else `createConfluencePage`; same paren
 `versionMessage`: `"Tuning ledger update <now> <timezone>"`. Apply PII redaction. This page,
 like the weekly ones, is written only by this agent.
 
+This write gets the Retry policy too, but it is **not** run-fatal the way the weekly
+page is: if the ledger still fails after its attempts while the weekly page landed,
+the run is DEGRADED, not failed. Finish the run, and say plainly in both the run
+output and the Slack summary that the ledger was not updated this run and which
+monitors' `weeks_seen` are therefore one behind — a silently stale ledger corrupts
+the recurrence counts that later recommendations are graded on.
+
 ### Step 8 — Publish summary to Slack (daily)
+
+**First, check what actually got published.** If Step 7's weekly page write failed
+after all its retries, skip the normal summary entirely and post the failure root
+message from "Reporting a failed run" instead. The summary below assumes a page
+exists and links to it; posting it after a failed write is how a broken run gets
+mistaken for a healthy one. This channel is the only place anyone would notice.
 
 1. Resolve channel ID with `slack_search_channels` on `slack_channel`.
 2. **Find this week's root message (the agent is stateless — it must anchor by content).** The
@@ -575,6 +588,58 @@ like the weekly ones, is written only by this agent.
 - Apply **customer-PII redaction** to everything published.
 - Prefer `*_stats`/`aggregate_events` for counts; reserve `*_list`/`*_show` for detail.
 
+## Retry policy — reads degrade, writes retry
+
+The Fallbacks below are about **reads**. When Datadog or incident.io cannot be
+reached, the right move is to publish the report anyway with that section marked
+unavailable: a partial handoff is useful, a missing one is not.
+
+**Writes are the opposite, and the distinction matters more than anything else in
+this section.** The Confluence page IS the deliverable. A run that analyzes
+everything correctly and then fails to publish has produced nothing. On
+2026-08-18 a run degraded past a Confluence `needsAuth`, posted a cheerful
+summary to Slack, and finished without ever creating that week's page — the page
+was simply missing and nobody noticed until the dashboard came up empty. Do not
+repeat that.
+
+So for every **write** — `createConfluencePage`, `updateConfluencePage`, and the
+Slack post:
+
+- **Attempts:** 4 (first try + 3 retries).
+- **Backoff:** 30s, then 2m, then 5m. Publishing five minutes late is invisible
+  to readers; not publishing at all is not.
+- **Re-run the find-or-create SEARCH before every retry.** A create that timed out
+  may well have succeeded on the server, and a blind retry is exactly how the
+  folder ends up with two pages for one week. Search first, then decide whether
+  the retry is a create or an update.
+- **On `needsAuth`:** call `mcp_auth` for that one server, then retry. If a second
+  `needsAuth` arrives after a successful `mcp_auth`, treat it as permanent, stop
+  retrying that server, and go to "Reporting a failed run" — the connector needs a
+  human and more attempts will not summon one.
+- **On a version conflict** (the page changed under you between read and update):
+  re-read the page, re-extract the manual-notes section, re-apply, retry. Never
+  resolve a conflict by blind-overwriting — that is how human notes get destroyed.
+- **Retry:** timeouts, network errors, 429, 5xx, `needsAuth`, version conflicts.
+- **Do not retry:** malformed HTML, validation errors, and 4xx other than 429.
+  They fail identically every time. Rejected HTML has its own fix in Fallbacks
+  (correct the nesting, then fall back to markdown) — that is a different fix, not
+  a retry, and it does not consume an attempt.
+
+### Reporting a failed run
+
+If the weekly page still could not be written after all four attempts, the run has
+FAILED, regardless of how much analysis succeeded. Report it honestly:
+
+- Do **not** post the normal `:rotating_light:` summary. It reads as a healthy run,
+  and the missing page goes unnoticed.
+- Post a root message instead (never buried in a thread, where it is easy to miss):
+  `:x: <team_label> handoff FAILED to publish — week Tue {start} → Tue {end}.`
+  Then state: which write failed, the exact error, how many attempts were made,
+  and what did work (e.g. "analysis complete; Datadog and incident.io read fine —
+  only the Confluence write failed").
+- Return FAILED as the run outcome. Never describe an unpublished page as published,
+  and never link to a page you did not verify exists.
+
 ## Fallbacks
 
 - **incident.io auth error** → build alerts from Datadog only; mark Agent Finding / On-call as
@@ -596,7 +661,11 @@ like the weekly ones, is written only by this agent.
   rather than failing, and note the possible duplicate in the run output.
 - **Datadog audit events not exposed** → use the `modified`-timestamp method for config
   changes and note the limitation.
-- On a tool auth error, attempt `mcp_auth` for that one server once, then retry.
+- On a tool auth error, attempt `mcp_auth` for that one server, then retry. For a
+  **read** that is one attempt — if it still fails, degrade that section per the
+  bullets above and carry on. For a **write** it is the full Retry policy above:
+  four attempts, backoff, and a FAILED run if they are all exhausted. Never let a
+  write quietly degrade into "published without the page".
 
 ## Output footer (always include)
 

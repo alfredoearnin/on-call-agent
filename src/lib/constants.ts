@@ -130,3 +130,59 @@ export const AppliedChangeStatus = {
 } as const;
 export type AppliedChangeStatus =
   (typeof AppliedChangeStatus)[keyof typeof AppliedChangeStatus];
+
+/** The two Cursor Automations that produce this dashboard's data, in run order. */
+export const AutomationKey = {
+  HealthCheck: "health_check",
+  DashboardRefresh: "dashboard_refresh",
+} as const;
+export type AutomationKey = (typeof AutomationKey)[keyof typeof AutomationKey];
+
+/**
+ * Health of one cloud automation, inferred from local evidence. Cursor exposes no
+ * run-status API, so every state below is a statement about what this checkout
+ * could observe — never about what Cursor actually did.
+ */
+export const AutomationHealthState = {
+  /** Positive evidence of today's run was found. */
+  Healthy: "healthy",
+  /** Due, but the grace window has not closed yet — nothing is wrong. */
+  Pending: "pending",
+  /** Grace closed, the evidence channel was readable, the evidence is absent.
+   *  The only state that accuses an automation. */
+  Failed: "failed",
+  /** The evidence channel itself could not be read. Absence here proves nothing. */
+  Unknown: "unknown",
+} as const;
+export type AutomationHealthState =
+  (typeof AutomationHealthState)[keyof typeof AutomationHealthState];
+
+/** Outcome of a dashboard-initiated automation webhook trigger. */
+export const TriggerStatus = {
+  Triggered: "triggered",
+  Failed: "failed",
+  /** The server-side config gate refused (webhook URL or key missing). */
+  Blocked: "blocked",
+} as const;
+export type TriggerStatus = (typeof TriggerStatus)[keyof typeof TriggerStatus];
+
+/**
+ * Availability of a rotation member, from the handoff page's coverage check.
+ * `Unknown` is load-bearing: the page carrying no check, or a check that failed,
+ * must never read as "available".
+ */
+export const Coverage = {
+  Available: "available",
+  OutOfOffice: "out_of_office",
+  Unknown: "unknown",
+} as const;
+export type Coverage = (typeof Coverage)[keyof typeof Coverage];
+
+/** The four rotation slots the coverage check reports on. */
+export const CoverageRole = {
+  Primary: "primary",
+  Secondary: "secondary",
+  NextPrimary: "nextPrimary",
+  NextSecondary: "nextSecondary",
+} as const;
+export type CoverageRole = (typeof CoverageRole)[keyof typeof CoverageRole];

@@ -1,6 +1,8 @@
 import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
+  Coverage,
+  CoverageRole,
   Priority,
   MonitorState,
   AlertDisposition,
@@ -15,7 +17,10 @@ import type {
   NormalizedAlert,
   NormalizedMonitor,
   NormalizedRecommendation,
+  CoverageEntry,
   NormalizedSchedule,
+  PageCoverage,
+  PageRefresh,
   ProposedPatch,
 } from "@/lib/ingest/types";
 
@@ -48,12 +53,154 @@ function alertIdFrom(text: string): string | undefined {
   return m?.[1];
 }
 
-function parseDate(text: string, tz: string): Date | undefined {
-  const m = /(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?/.exec(text);
-  if (!m) return undefined;
-  const iso = m[2] ? `${m[1]}T${m[2]}` : m[1];
-  const dt = DateTime.fromISO(iso, { zone: tz });
-  return dt.isValid ? dt.toJSDate() : undefined;
+// ── Event times ─────────────────────────────────────────────────────────────
+
+/**
+ * When an alert fired, read out of the finding prose.
+ *
+ * The pages never write ISO dates for alert times. Surveying the corpus, they
+ * write `Aug 7 15:00 UTC`, `Fri Jul 31 18:23 PT`, `~2:18 AM PT Thu Aug 20`, or
+ * just `Mon Aug 17` with no clock time at all — and crucially both UTC and PT
+ * appear, 7 hours apart, so flattening them into the team zone is a real error.
+ *
+ * Two rules carry the honesty here:
+ *
+ * 1. The zone label on the page wins. `09:17 UTC` and `09:17 PT` are different
+ *    instants and must not be conflated.
+ * 2. A time the page did not state is NOT invented. `timeKnown: false` means the
+ *    day is known but the clock time is not, and callers must render it as such
+ *    rather than showing a confident wrong time. Returning `undefined` means we
+ *    know nothing — the previous `?? new Date()` fallback stamped alerts with
+ *    their ingest time, which is how a 02:17 AM page came to read as 11:10 AM.
+ *
+ * Quantifiers are bounded throughout, per the ReDoS discipline used by the other
+ * parsers in this file.
+ */
+export interface ParsedEventTime {
+  at: Date;
+  /** False when the page gave a date but no clock time. */
+  timeKnown: boolean;
+  /** The zone the instant was resolved in, for the record. */
+  zone: string;
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** Zone abbreviations the pages use. PT/PST/PDT resolve via the team zone. */
+const UTC_LABEL = /^(utc|gmt|z)$/i;
+
+const ISO_AT = /(\d{4}-\d{2}-\d{2})(?:[\sT]{1,3}(\d{1,2}):(\d{2}))?/;
+/** `Aug 20 09:17 UTC`, `Fri Jul 31 18:23 PT`, `Mon Aug 17` */
+const MONTH_DAY_AT = new RegExp(
+  String.raw`(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]{0,6}\s{1,3})?` +
+    String.raw`(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]{0,7}\s{1,3}(\d{1,2})` +
+    String.raw`(?:\s{1,3}~?(\d{1,2}):(\d{2})\s{0,3}(am|pm)?\s{0,3}([a-z]{2,4})?)?`,
+  "i",
+);
+/** `~2:18 AM PT Thu Aug 20` — time first, date later in the sentence. */
+const TIME_FIRST = new RegExp(
+  String.raw`~?(\d{1,2}):(\d{2})\s{0,3}(am|pm)\s{0,3}([a-z]{2,4})?` +
+    String.raw`[^0-9]{0,40}?(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]{0,6}\s{1,3})?` +
+    String.raw`(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]{0,7}\s{1,3}(\d{1,2})`,
+  "i",
+);
+/** Prefer a timestamp introduced by a "fired" cue over acks and resolutions. */
+const FIRED_CUE = /fired(?:\s{1,3}(?:at|on))?\s{0,3}/i;
+const CUE_WINDOW = 60;
+
+export function parseEventTime(
+  text: string,
+  opts: { tz: string; window?: { start: Date; end: Date } },
+): ParsedEventTime | undefined {
+  const { tz, window } = opts;
+  const flat = text.replace(/\s+/g, " ");
+
+  // A "fired at …" clause is the authoritative one; acks and resolutions come
+  // later in the same sentence and must not win.
+  const cue = FIRED_CUE.exec(flat);
+  if (cue) {
+    const scoped = flat.slice(cue.index, cue.index + CUE_WINDOW);
+    const hit = matchAny(scoped, tz, window);
+    if (hit) return hit;
+  }
+  return matchAny(flat, tz, window);
+}
+
+function matchAny(
+  flat: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): ParsedEventTime | undefined {
+  const iso = ISO_AT.exec(flat);
+  if (iso) {
+    const zone = tz;
+    const dt = iso[2]
+      ? DateTime.fromISO(`${iso[1]}T${iso[2].padStart(2, "0")}:${iso[3]}`, { zone })
+      : DateTime.fromISO(iso[1], { zone }).startOf("day");
+    if (dt.isValid) return { at: dt.toJSDate(), timeKnown: Boolean(iso[2]), zone };
+  }
+
+  const timeFirst = TIME_FIRST.exec(flat);
+  if (timeFirst) {
+    const built = build({
+      month: timeFirst[5], day: timeFirst[6],
+      hour: timeFirst[1], minute: timeFirst[2],
+      meridiem: timeFirst[3], label: timeFirst[4], tz, window,
+    });
+    if (built) return built;
+  }
+
+  const md = MONTH_DAY_AT.exec(flat);
+  if (md) {
+    const built = build({
+      month: md[1], day: md[2],
+      hour: md[3], minute: md[4], meridiem: md[5], label: md[6], tz, window,
+    });
+    if (built) return built;
+  }
+
+  return undefined;
+}
+
+function build(p: {
+  month: string; day: string;
+  hour?: string; minute?: string; meridiem?: string; label?: string;
+  tz: string; window?: { start: Date; end: Date };
+}): ParsedEventTime | undefined {
+  const month = MONTHS[p.month.slice(0, 3).toLowerCase()];
+  const day = Number.parseInt(p.day, 10);
+  if (!month || !Number.isFinite(day)) return undefined;
+
+  // The pages never write a year on alert times, so take it from the on-call week
+  // and roll over when the month sits before the window (a Dec→Jan week).
+  const anchor = p.window?.start ?? new Date();
+  const anchorDt = DateTime.fromJSDate(anchor, { zone: p.tz });
+  const year = month < anchorDt.month - 6 ? anchorDt.year + 1 : anchorDt.year;
+
+  const timeKnown = Boolean(p.hour && p.minute);
+  let hour = timeKnown ? Number.parseInt(p.hour!, 10) : 0;
+  const minute = timeKnown ? Number.parseInt(p.minute!, 10) : 0;
+  const mer = p.meridiem?.toLowerCase();
+  if (mer === "pm" && hour < 12) hour += 12;
+  if (mer === "am" && hour === 12) hour = 0;
+
+  // The zone label on the page wins over the team zone. Anything unrecognised
+  // (or absent) falls back to the team zone, which is what the pages default to.
+  const zone = p.label && UTC_LABEL.test(p.label) ? "utc" : p.tz;
+
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute },
+    { zone },
+  );
+  if (!dt.isValid) return undefined;
+  return {
+    at: timeKnown ? dt.toJSDate() : dt.startOf("day").toJSDate(),
+    timeKnown,
+    zone,
+  };
 }
 
 /** Return the body of a section between a heading and the next heading. */
@@ -122,6 +269,200 @@ export function parseWindow(
   const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
   if (!start.isValid || !end.isValid) return undefined;
   return { start: start.toJSDate(), end: end.toJSDate() };
+}
+
+// ── Page refresh stamp ──────────────────────────────────────────────────────
+
+/**
+ * The page's own claim about when the health-check automation last rewrote it.
+ * This is the ONLY evidence the dashboard has that automation 1 ran, so a silent
+ * parse failure must degrade to "unknown", never to "failed".
+ *
+ * The label drifts, because an LLM writes each page: `Last refreshed **…**`,
+ * `**Last refreshed: …**`, and on a frozen week `Final refresh completed **…**`.
+ * `refresh` alone is deliberately NOT accepted — pages also say "New since the
+ * last refresh (Jul 25 → Jul 26)", "at this morning's 08:02 AM refresh", and
+ * "refreshed daily during the on-call week", none of which is a stamp.
+ *
+ * Every quantifier is bounded, for the same reason as the rotation regexes: an
+ * unbounded `\s*` beside a capture lets the engine split a whitespace run
+ * exponentially many ways and hang the ingest.
+ */
+const REFRESH_LABEL = String.raw`(?:last\s{1,4}refreshed|(?:final\s{1,4})?refresh(?:ed)?\s{1,4}completed)`;
+/** `2026-08-19 8:00 AM PT (America/Los_Angeles)` — time, abbreviation and zone all optional. */
+const REFRESH_STAMP =
+  String.raw`(\d{4}-\d{2}-\d{2})(?:[\s*]{1,6}(\d{1,2}:\d{2})\s{0,4}(AM|PM))?` +
+  String.raw`(?:\s{0,4}([A-Z]{2,4}))?(?:\s{0,4}\(([A-Za-z]{2,12}\/[A-Za-z_]{2,20})\))?`;
+const REFRESHED_AT = new RegExp(
+  `${REFRESH_LABEL}[\\s:*_—-]{0,8}${REFRESH_STAMP}`,
+  "i",
+);
+
+/**
+ * `tz` is the fallback zone used when the page names no IANA zone. The `PT`
+ * abbreviation is deliberately ignored: it is ambiguous between PDT and PST, and
+ * guessing would put the stamp an hour off across a DST boundary — enough to move
+ * it across local midnight and flip a health verdict. The page's own
+ * `(America/Los_Angeles)` is authoritative when present.
+ */
+export function parseRefreshedAt(
+  md: string,
+  tz: string,
+): PageRefresh | undefined {
+  for (const line of md.split("\n")) {
+    const m = REFRESHED_AT.exec(line.replace(/\s+/g, " "));
+    if (!m) continue;
+
+    const [, date, time, meridiem, , namedZone] = m;
+    const text = m[0]
+      .replace(/\*\*/g, "")
+      .replace(/\\/g, "")
+      .replace(/^[^0-9]*/, "")
+      .replace(/[.\s]+$/, "")
+      .trim();
+
+    const zone =
+      namedZone && DateTime.local({ zone: namedZone }).isValid ? namedZone : tz;
+    const dt =
+      time && meridiem
+        ? DateTime.fromFormat(`${date} ${time} ${meridiem}`, "yyyy-MM-dd h:mm a", {
+            zone,
+          })
+        : DateTime.fromISO(date, { zone }).startOf("day");
+
+    return {
+      at: dt.isValid ? dt.toJSDate() : undefined,
+      text,
+      dateOnly: !time,
+    };
+  }
+  return undefined;
+}
+
+// ── Coverage check (who on the rotation is out of office) ───────────────────
+
+/**
+ * The page's coverage check, written by the Health Check agent after it resolves
+ * the rotation (see on-call.md Step 1). It is the only signal the dashboard has
+ * that a named on-call is actually unavailable.
+ *
+ * Three properties matter more than tolerance here:
+ *
+ * 1. The header line is REQUIRED. Its absence means the check never ran, which is
+ *    "unknown" — never "everyone is available". Those must not look the same.
+ * 2. Role lines are read only from INSIDE the block. Scanning the whole page would
+ *    misread ordinary prose like "* Primary shashank — acked in 13 s".
+ * 3. A role the block does not mention is Unknown, not Available.
+ *
+ * Every quantifier is bounded, for the same reason as the rotation and refresh
+ * regexes: an unbounded `\s*` next to a capture lets the engine split a whitespace
+ * run exponentially many ways and hang the ingest.
+ */
+const COVERAGE_FAILED =
+  /coverage\s{1,4}check\s{0,4}:\s{0,4}could\s{1,4}not\s{1,4}be\s{1,4}completed(?:\s{0,4}\(([^)]{0,80})\))?/i;
+const COVERAGE_HEADER = /coverage\s{1,4}check(?:\s{0,4}\(([^)]{0,80})\))?\s{0,4}:/i;
+/** A bullet naming one rotation slot. `next primary` must precede `primary`. */
+const COVERAGE_ROLE =
+  /^[*\-•\s]{1,6}(next\s{1,4}primary|next\s{1,4}secondary|primary|secondary)\b(.{0,160})$/i;
+const COVERAGE_OUT =
+  /out\s{1,4}of\s{1,4}office\b[^0-9]{0,24}(\d{4}-\d{2}-\d{2})\s{0,4}(?:→|->|-|to)\s{0,4}(\d{4}-\d{2}-\d{2})/i;
+const COVERAGE_UNCHECKED = /could\s{1,4}not\s{1,4}be\s{1,4}checked/i;
+const COVERAGE_AVAILABLE = /\bavailable\b/i;
+const COVERAGE_OPEN_ENDED = /open[\s-]{0,2}ended/i;
+/** How far past the header to look for bullets before giving up. */
+const COVERAGE_BLOCK_LINES = 12;
+
+const ROLE_KEYS: Record<string, CoverageRole> = {
+  primary: CoverageRole.Primary,
+  secondary: CoverageRole.Secondary,
+  nextprimary: CoverageRole.NextPrimary,
+  nextsecondary: CoverageRole.NextSecondary,
+};
+
+const unknownRoles = (): Record<CoverageRole, CoverageEntry> => ({
+  [CoverageRole.Primary]: { state: Coverage.Unknown },
+  [CoverageRole.Secondary]: { state: Coverage.Unknown },
+  [CoverageRole.NextPrimary]: { state: Coverage.Unknown },
+  [CoverageRole.NextSecondary]: { state: Coverage.Unknown },
+});
+
+/** Strip markdown emphasis and escapes without the link pass `clean` also does. */
+function flattenLine(line: string): string {
+  return line
+    .replace(/\s+/g, " ")
+    .replace(/\*\*/g, "")
+    .replace(/\\/g, "")
+    .trim();
+}
+
+export function parseCoverage(
+  md: string,
+  tz: string,
+): PageCoverage | undefined {
+  const lines = md.split("\n");
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = flattenLine(lines[i]);
+    if (!line) continue;
+
+    // Checked before the header: the failure sentence also matches COVERAGE_HEADER.
+    const failed = COVERAGE_FAILED.exec(line);
+    if (failed) {
+      return {
+        unavailableReason: clean(failed[1] ?? "") || "reason not stated",
+        roles: unknownRoles(),
+      };
+    }
+
+    const header = COVERAGE_HEADER.exec(line);
+    if (!header) continue;
+
+    const roles = unknownRoles();
+    for (let j = i + 1; j < Math.min(lines.length, i + 1 + COVERAGE_BLOCK_LINES); j++) {
+      const raw = lines[j];
+      if (/^\s*#/.test(raw)) break; // a heading ends the block
+      const bullet = flattenLine(raw).replace(/^_+|_+$/g, "").trim();
+      if (!bullet) continue;
+
+      const m = COVERAGE_ROLE.exec(bullet);
+      if (!m) continue;
+
+      const key = m[1].toLowerCase().replace(/\s+/g, "");
+      const role = ROLE_KEYS[key];
+      if (!role) continue;
+
+      roles[role] = coverageEntry(m[2], bullet, tz);
+    }
+
+    return { checkedAt: clean(header[1] ?? "") || undefined, roles };
+  }
+
+  return undefined;
+}
+
+function coverageEntry(rest: string, evidence: string, tz: string): CoverageEntry {
+  const out = COVERAGE_OUT.exec(rest);
+  if (out) {
+    const from = DateTime.fromISO(out[1], { zone: tz }).startOf("day");
+    const to = DateTime.fromISO(out[2], { zone: tz }).endOf("day");
+    return {
+      state: Coverage.OutOfOffice,
+      from: from.isValid ? from.toJSDate() : undefined,
+      to: to.isValid ? to.toJSDate() : undefined,
+      openEnded: COVERAGE_OPEN_ENDED.test(rest) || undefined,
+      evidence,
+    };
+  }
+  // "could not be checked" is deliberately tested before "available", so a line
+  // saying both never reads as available.
+  if (COVERAGE_UNCHECKED.test(rest)) {
+    return { state: Coverage.Unknown, evidence };
+  }
+  if (COVERAGE_AVAILABLE.test(rest)) {
+    return { state: Coverage.Available, evidence };
+  }
+  // A bullet we cannot classify is Unknown, never Available.
+  return { state: Coverage.Unknown, evidence };
 }
 
 // ── On-call schedule ────────────────────────────────────────────────────────
@@ -382,7 +723,34 @@ function parseRecommendations(md: string): NormalizedRecommendation[] {
 
 // ── Alerts ──────────────────────────────────────────────────────────────────
 
-function parseRequiredAttention(md: string, tz: string): NormalizedAlert[] {
+/**
+ * `firedAt` is required by the schema, so an alert whose time the page never stated
+ * still needs an instant. Anchor it to the start of the on-call week — defensible,
+ * and it groups the alert into the right week — but record `firedAtTimeKnown: false`
+ * so the UI shows no clock time rather than a confident wrong one. The previous
+ * `?? new Date()` stamped these with the ingest time, which is how an alert that
+ * paged at 02:17 came to read as 11:10.
+ */
+function firedAtFrom(
+  text: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): { firedAt: Date; firedAtTimeKnown: boolean } {
+  const parsed = parseEventTime(text, { tz, window });
+  if (parsed) {
+    return { firedAt: parsed.at, firedAtTimeKnown: parsed.timeKnown };
+  }
+  return {
+    firedAt: window?.start ?? new Date(),
+    firedAtTimeKnown: false,
+  };
+}
+
+function parseRequiredAttention(
+  md: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): NormalizedAlert[] {
   const sec = section(md, /Required Human Attention/i);
   if (!sec) return [];
   const out: NormalizedAlert[] = [];
@@ -401,7 +769,7 @@ function parseRequiredAttention(md: string, tz: string): NormalizedAlert[] {
       status: /resolved|self-resolved|auto-resolved/i.test(finding) ? "resolved" : "firing",
       disposition: AlertDisposition.RequiredHumanAttention,
       firingKind: FiringKind.Resolved,
-      firedAt: parseDate(finding, tz) ?? new Date(),
+      ...firedAtFrom(finding, tz, window),
       env: clean(serviceCell) || undefined,
       timesFired: 1,
       finding,
@@ -416,6 +784,7 @@ function parseBulletAlerts(
   disposition: string | undefined,
   firingKind: string,
   tz: string,
+  window?: { start: Date; end: Date },
 ): NormalizedAlert[] {
   const sec = section(md, headingPattern);
   if (!sec) return [];
@@ -435,7 +804,7 @@ function parseBulletAlerts(
       status: firingKind === FiringKind.Stale ? "firing" : "resolved",
       disposition: disposition as NormalizedAlert["disposition"],
       firingKind: firingKind as NormalizedAlert["firingKind"],
-      firedAt: parseDate(text, tz) ?? new Date(),
+      ...firedAtFrom(text, tz, window),
       timesFired: 1,
       finding: text,
     });
@@ -493,11 +862,13 @@ export function parseConfluence(
   const window = parseWindow(handoffMd, tz);
   const schedule = parseOnCall(handoffMd);
   const kpis = parseKpis(handoffMd);
+  const pageRefresh = parseRefreshedAt(handoffMd, tz);
+  const coverage = parseCoverage(handoffMd, tz);
   const recommendations = parseRecommendations(handoffMd);
   const alerts = [
-    ...parseRequiredAttention(handoffMd, tz),
-    ...parseBulletAlerts(handoffMd, /Auto-Resolved/i, AlertDisposition.AutoResolved, FiringKind.Resolved, tz),
-    ...parseBulletAlerts(handoffMd, /Open Going Into Handoff/i, undefined, FiringKind.Stale, tz),
+    ...parseRequiredAttention(handoffMd, tz, window),
+    ...parseBulletAlerts(handoffMd, /Auto-Resolved/i, AlertDisposition.AutoResolved, FiringKind.Resolved, tz, window),
+    ...parseBulletAlerts(handoffMd, /Open Going Into Handoff/i, undefined, FiringKind.Stale, tz, window),
   ];
   const vuln = parseVuln(handoffMd);
   const monitors = collectMonitors(recommendations, alerts);
@@ -511,11 +882,15 @@ export function parseConfluence(
     schedule,
     kpis: kpis ?? undefined,
     window,
+    pageRefresh,
+    coverage,
     sourceStatus: {
       datadog: SourceStatus.Skipped,
       incidentio: SourceStatus.Skipped,
       jira: SourceStatus.Skipped,
     },
-    notes: `Confluence source${kpis ? "" : " (KPI summary not parsed)"}`,
+    notes: `Confluence source${kpis ? "" : " (KPI summary not parsed)"}${
+      pageRefresh ? "" : " (no refresh stamp)"
+    }`,
   };
 }

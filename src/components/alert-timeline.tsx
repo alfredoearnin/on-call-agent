@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { CalendarDays } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { priorityTone, fmtTime } from "@/lib/format";
+import { LocalTime } from "@/components/local-time";
 import { FindingDetail } from "@/components/finding-detail";
 import { AlertDisposition } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -14,6 +15,7 @@ interface TimelineAlert {
   priority: string;
   disposition: string | null;
   firedAt: Date;
+  firedAtTimeKnown?: boolean;
   env: string | null;
   finding: string | null;
   monitor?: { service: string | null; datadogUrl: string | null } | null;
@@ -22,6 +24,12 @@ interface TimelineAlert {
 /**
  * Chronological "what happened when" view of the week's alerts, grouped by
  * local day (newest first). Complements the disposition-grouped list.
+ *
+ * Two zones are in play on purpose: day headings use the on-call week's timezone,
+ * because that is how the week and the handoff are defined, while each alert's time
+ * renders in the reader's own zone (see LocalTime). Near local midnight an alert can
+ * therefore show a time belonging to the adjacent local day; the zone label on the
+ * time is what makes that readable rather than baffling.
  */
 export function AlertTimeline({
   alerts,
@@ -80,7 +88,11 @@ export function AlertTimeline({
                   />
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-xs tabular-nums text-muted-foreground">
-                      {fmtTime(a.firedAt, tz)}
+                      <LocalTime
+                        iso={new Date(a.firedAt).toISOString()}
+                        fallback={fmtTime(a.firedAt, tz)}
+                        timeKnown={a.firedAtTimeKnown ?? true}
+                      />
                     </span>
                     <Badge tone={priorityTone(a.priority)}>{a.priority}</Badge>
                     <Badge tone={human ? "warn" : "ok"}>

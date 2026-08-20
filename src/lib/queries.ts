@@ -1,9 +1,18 @@
 import "server-only";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
-import { getConfig } from "@/lib/config";
+import { getConfig, hasCloudAutomations } from "@/lib/config";
 import { dayKey } from "@/lib/format";
-import { AlertDisposition, FiringKind, IncidentClass } from "@/lib/constants";
+import {
+  AlertDisposition,
+  AutomationKey,
+  FiringKind,
+  IncidentClass,
+  RunStatus,
+  TriggerStatus,
+} from "@/lib/constants";
+import { readGitEvidence } from "@/lib/automations/git-evidence";
+import { assessAutomations, type AutomationHealth } from "@/lib/automations/health";
 
 export async function getSyncSettings() {
   return prisma.syncSettings.findUnique({ where: { id: "singleton" } });
@@ -12,6 +21,21 @@ export async function getSyncSettings() {
 export async function getLatestRun() {
   return prisma.ingestionRun.findFirst({
     where: { status: { in: ["success", "partial"] } },
+    orderBy: { startedAt: "desc" },
+  });
+}
+
+/**
+ * The newest run of ANY finished status.
+ *
+ * getLatestRun() filters to success|partial, so after a failed run it returns an
+ * older one — and quoting that row's page stamp as "the latest look" would
+ * overstate how recently the handoff page was seen. Automation health needs the
+ * newest row, whatever its status.
+ */
+export async function getLatestRunAnyStatus() {
+  return prisma.ingestionRun.findFirst({
+    where: { status: { not: RunStatus.Running } },
     orderBy: { startedAt: "desc" },
   });
 }
@@ -271,5 +295,63 @@ export async function getProductionIncidents(runWindowStart?: Date) {
       ...(runWindowStart ? { openedAt: { gte: runWindowStart } } : {}),
     },
     orderBy: { openedAt: "desc" },
+  });
+}
+
+/**
+ * Evidence-derived health of the two cloud Cursor Automations.
+ *
+ * Returns [] in demo and live mode: there are no automations feeding those, so
+ * inventing a verdict about them would be a fabrication.
+ */
+export async function getAutomationHealth(
+  now: Date = new Date(),
+): Promise<AutomationHealth[]> {
+  const cfg = getConfig();
+  if (!hasCloudAutomations(cfg)) return [];
+
+  const [git, run] = await Promise.all([
+    readGitEvidence(),
+    getLatestRunAnyStatus(),
+  ]);
+
+  return assessAutomations({
+    now,
+    schedule: cfg.automations,
+    git,
+    page: {
+      refreshedAt: run?.handoffRefreshedAt ?? undefined,
+      refreshedText: run?.handoffRefreshedText ?? undefined,
+      runStartedAt: run?.startedAt,
+      runStatus: run?.status,
+      noRun: !run,
+    },
+  });
+}
+
+/** The most recent trigger fired from this dashboard, per automation. */
+export async function getLastAutomationTriggers(): Promise<
+  Record<AutomationKey, { id: string; triggeredAt: Date; status: string } | null>
+> {
+  const [healthCheck, dashboardRefresh] = await Promise.all(
+    [AutomationKey.HealthCheck, AutomationKey.DashboardRefresh].map((key) =>
+      prisma.automationTrigger.findFirst({
+        where: { automationKey: key, status: TriggerStatus.Triggered },
+        orderBy: { triggeredAt: "desc" },
+        select: { id: true, triggeredAt: true, status: true },
+      }),
+    ),
+  );
+  return {
+    [AutomationKey.HealthCheck]: healthCheck,
+    [AutomationKey.DashboardRefresh]: dashboardRefresh,
+  };
+}
+
+/** Recent trigger attempts, for the Settings run log. */
+export async function getAutomationTriggers(limit = 10) {
+  return prisma.automationTrigger.findMany({
+    orderBy: { triggeredAt: "desc" },
+    take: limit,
   });
 }
