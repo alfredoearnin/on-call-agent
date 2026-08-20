@@ -9,7 +9,7 @@ export interface FeedbackResult {
 }
 
 /**
- * Feedback loop (on-call.md Step 0.5). After monitors + recommendations are
+ * Feedback loop (the agent prompt, Step 0.5). After monitors + recommendations are
  * persisted, detect whether a recommended change was applied — either via a
  * recorded AppliedChange (this dashboard's apply feature) or by observing the
  * recommended transform already present in the monitor's live config (someone

@@ -343,7 +343,7 @@ export function parseRefreshedAt(
 
 /**
  * The page's coverage check, written by the Health Check agent after it resolves
- * the rotation (see on-call.md Step 1). It is the only signal the dashboard has
+ * the rotation (see the agent prompt, Step 1). It is the only signal the dashboard has
  * that a named on-call is actually unavailable.
  *
  * Three properties matter more than tolerance here:
@@ -473,7 +473,7 @@ function coverageEntry(rest: string, evidence: string, tz: string): CoverageEntr
  * incident.io could not be reached), and `the new week's primary is X,
  * secondary Y`. Matching whole sentences broke on each new one, so instead find
  * every role label sitting next to an emphasised name and use a "next" cue to
- * separate the upcoming rotation from the current one. `on-call.md` pins the
+ * separate the upcoming rotation from the current one. `the agent prompt in agents/` pins the
  * canonical wording; this is the tolerance around it.
  *
  * Every quantifier is bounded: a name may contain spaces, so an unbounded `\s*`

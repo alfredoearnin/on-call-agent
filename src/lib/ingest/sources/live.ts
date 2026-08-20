@@ -100,7 +100,7 @@ function extractMonitorId(title: string): string | undefined {
 
 /**
  * Build a normalized bundle from live sources. Each source is isolated so an
- * outage degrades gracefully (on-call.md fallbacks) instead of failing the run.
+ * outage degrades gracefully (the agent prompt in agents/ fallbacks) instead of failing the run.
  * Recommendations are computed downstream by the tuning classifier.
  */
 export async function buildLiveBundle(

@@ -23,7 +23,7 @@ import { AUTOMATIONS, automationMeta } from "@/lib/automations/meta";
 import type { GitCommit, GitEvidence } from "@/lib/automations/git-evidence";
 
 /**
- * daily-refresh.md step 6b commits `Daily refresh $(date +%Y-%m-%d)`; the squash
+ * agents/OnCall dashboard.md step 6b commits `Daily refresh $(date +%Y-%m-%d)`; the squash
  * merge in step 6d appends the PR number, so what actually lands on main is
  * `Daily refresh 2026-08-19 (#31)`. A pattern anchored to `^Daily refresh <date>$`
  * would miss every real commit.

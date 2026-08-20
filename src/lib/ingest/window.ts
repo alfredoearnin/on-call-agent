@@ -16,7 +16,7 @@ export interface OpsWindow {
 
 /**
  * Resolve the on-call window (Tuesday -> the following Tuesday), week-to-date,
- * in the team timezone. Mirrors on-call.md Step 0.
+ * in the team timezone. Mirrors the agent prompt, Step 0.
  */
 export function resolveWindow(now: Date = new Date()): OpsWindow {
   const tz = getConfig().team.timezone;

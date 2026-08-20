@@ -67,10 +67,24 @@ Do this:
       gh pr ready "$PR" || true
       gh pr merge "$PR" --squash --delete-branch
 
-   e. If the merge is rejected because the PR is not mergeable (conflicts with main from a previous day's refresh), resolve by taking the PR branch's data files and retry:
+   e. If the merge is rejected because the PR is not mergeable (conflicts with main from a
+      previous day's refresh), resolve **only the two data paths** in favour of this branch
+      and retry. NEVER use a tree-wide strategy like `-X ours`, and never `git add -A`: this
+      automation merges to main unattended every day, so either one would silently discard
+      somebody else's source-code change. Abort instead — a failed refresh is recoverable,
+      a lost commit is not:
       git fetch origin main
-      git merge origin/main -X ours -m "Merge main into $BR" \
-        || { git checkout --ours -- data/confluence prisma/oncall.db; git add -A; git commit --no-edit; }
+      if ! git merge origin/main -m "Merge main into $BR"; then
+        git checkout --ours -- data/confluence prisma/oncall.db
+        git add -- data/confluence prisma/oncall.db
+        # Anything still conflicting is outside this automation's scope.
+        if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+          echo "Unexpected conflict outside data paths:"; git diff --name-only --diff-filter=U
+          git merge --abort
+          exit 1
+        fi
+        git commit --no-edit
+      fi
       git push origin "$BR"
       gh pr merge "$PR" --squash --delete-branch
 
@@ -93,3 +107,25 @@ Do this:
 7. Never create draft PRs and never rely on auto-merge — every run must end with the PR in state MERGED on `main`.
 
 Constraints: only modify `data/confluence/*.md` and `prisma/oncall.db`. Do not change source code. Do not print secrets. The handoff contains no customer PII (monitor IDs and userid placeholders only).
+
+---
+
+## Why the merge is synchronous (do not "simplify" this back)
+
+Earlier revisions used `gh pr merge --auto` and PRs piled up unmerged (see #16–#28).
+Two failure modes drove that:
+
+- **Drafts.** The background agent opens PRs as drafts by default, and `--auto` never
+  merges a draft. Step d forces `gh pr ready` and asserts the state afterwards.
+- **Conflicts.** Every refresh rewrites the same two files (`data/confluence/handoff.md`
+  and `prisma/oncall.db`). Once two PRs are open, both go `CONFLICTING` against `main`
+  and auto-merge waits forever. Step a branches from fresh `main` and step e resolves in
+  favour of the PR branch — but **only for those two paths**, so a concurrent
+  source-code change on `main` is never discarded.
+
+That last clause is why step e must not use `-X ours` or `git add -A`. This automation
+merges to `main` unattended every day; a tree-wide strategy would silently drop somebody
+else's commit. A failed refresh is recoverable, a lost commit is not.
+
+The agent's `gh` token needs write/merge access to the repo; a permissions failure at
+step d cannot be fixed by prompt changes.

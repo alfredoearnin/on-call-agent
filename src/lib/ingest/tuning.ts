@@ -176,7 +176,7 @@ function buildChange(
 
 /**
  * Classify tuning candidates into concrete before -> after recommendations
- * (on-call.md Step 4/4b). Threshold-type changes are grounded in the metric's
+ * (the agent prompt, Step 4/4b). Threshold-type changes are grounded in the metric's
  * observed baseline when a Datadog client is available.
  */
 export async function classifyRecommendations(
@@ -199,7 +199,7 @@ export async function classifyRecommendations(
 
     let evidence = `${sig.fires} fire(s) this wk; ${sig.autoResolvedNoAck} auto-resolved-no-ack; ${sig.nightPages} night page(s); state ${m.state}.`;
 
-    // Baseline grounding for threshold changes (on-call.md Step 4b rule).
+    // Baseline grounding for threshold changes (the agent prompt, Step 4b rule).
     if (
       issue === IssueType.ThresholdTooLoose &&
       dd &&

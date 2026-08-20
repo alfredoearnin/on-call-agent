@@ -407,6 +407,25 @@ next step.
    `MM/DD/YYYY Growth Team Ops Review`, the window dates, source ("incident.io + Datadog,
    read-only"), and "Last refreshed: <now> <timezone>". Include the on-call name(s) from
    `schedule_show` (current primary + next).
+   - **Rotation line — fixed wording.** The dashboard parses this sentence to fill the
+     "On-call this week" banner, so write it verbatim in this shape, on its own line:
+
+     `_This on-call week — primary: **<name>**; secondary: **<name>** (shift <start> → <end>;
+     verified live via_ `schedule_show`_). Next handoff <date>: primary **<name>**, secondary
+     **<name>**._`
+
+     Keep `primary:` and `secondary:` with their colons, separated by a semicolon. Names from
+     `schedule_show`. This wording was dropped from this prompt some time between the Jul 28
+     and Aug 11 pages, and the Overview's on-call names broke as a result (fixed downstream in
+     PR #30 by making the parser tolerant). Do not drop it again — `src/lib/ingest/sources/prompt-contract.test.ts`
+     fails if it goes missing.
+   - **When `schedule_show` is unavailable** (incident.io down), do **not** drop the names and
+     do **not** invent them — carry the last known rotation forward and say so, in this shape:
+
+     `Last verified (<date>): Primary **<name>**, Secondary **<name>**.`
+
+     The dashboard recognises this as unverified and flags the banner accordingly. State the
+     reason in the same sentence (e.g. "incident.io connector down").
    - **Coverage check — fixed wording.** Someone named on-call who is on PTO is the gap that
      becomes an unanswered page, so check availability and state it. For each of the four
      rotation names (primary, secondary, next primary, next secondary): resolve the person with

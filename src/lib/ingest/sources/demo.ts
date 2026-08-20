@@ -14,7 +14,7 @@ import {
 import type { IngestBundle, NormalizedMonitor } from "@/lib/ingest/types";
 
 /**
- * Bundled sample data mirroring real Growth-team monitors (from the on-call.md
+ * Bundled sample data mirroring real Growth-team monitors (from the the agent prompt in agents/
  * Confluence reports). Lets the dashboard run with zero credentials and gives
  * the committed SQLite DB meaningful shared "memory" on clone. Times are anchored
  * relative to `now` so the daily view always has recent content.

@@ -43,7 +43,7 @@
   --primary: #2f6fed;
   --primary-foreground: #ffffff;
 
-  /* Status colors (aligned to on-call.md lozenges), tuned for light bg */
+  /* Status colors (aligned to the agent prompt in agents/ lozenges), tuned for light bg */
   --ok: #059669;
   --warn: #b45309;
   --alert: #dc2626;

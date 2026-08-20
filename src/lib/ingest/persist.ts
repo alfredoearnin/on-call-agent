@@ -44,7 +44,7 @@ const STATUS_RANK: Record<string, number> = {
   "strongly-recommend": 3,
 };
 
-/** Escalation tone from streak + active noise (on-call.md Step 4b). */
+/** Escalation tone from streak + active noise (the agent prompt, Step 4b). */
 function computeStatus(
   weeksSeen: number,
   firesThisWeek: number,
