@@ -10,10 +10,12 @@ import { describe, it } from "node:test";
 import { Coverage, CoverageRole } from "@/lib/constants";
 import type { CoverageEntry, PageCoverage } from "@/lib/ingest/types";
 import {
+  CoverageSummaryKind,
   assessCoverage,
   deserializeCoverage,
   isUpcoming,
   serializeCoverage,
+  summarizeCoverage,
 } from "@/lib/people/coverage";
 
 const NOW = new Date("2026-08-20T18:00:00.000Z");
@@ -179,6 +181,11 @@ describe("deserializeCoverage", () => {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
+const avail = (evidence: string): CoverageEntry => ({
+  state: Coverage.Available,
+  evidence,
+});
+
 const out = (from: Date, to: Date): CoverageEntry => ({
   state: Coverage.OutOfOffice,
   from,
@@ -198,3 +205,96 @@ function coverageWith(
 ): PageCoverage {
   return { roles: { ...allUnknown(), ...over } };
 }
+
+/*
+ * The banner used to show nothing both when nobody was away and when nobody had
+ * checked. These cases pin the four kinds apart, because "everyone is around" and
+ * "we never asked" must never render the same way.
+ */
+describe("summarizeCoverage", () => {
+  const summarize = (coverage?: PageCoverage) =>
+    summarizeCoverage(coverage, assessCoverage({ coverage, now: NOW }));
+
+  it("reports all available when the check found nobody away", () => {
+    const s = summarize(
+      coverageWith({
+        primary: avail("* Primary Ada Lovelace — available"),
+        secondary: avail("* Secondary Grace Hopper — available"),
+        nextPrimary: avail("* Next primary Alan Turing — available"),
+        nextSecondary: avail("* Next secondary Ada Lovelace — available"),
+      }),
+    );
+
+    assert.equal(s.kind, CoverageSummaryKind.AllAvailable);
+    assert.deepEqual(s.out, []);
+    assert.deepEqual(s.unverified, []);
+  });
+
+  it("reports who is away when someone is", () => {
+    const s = summarize(
+      coverageWith({
+        primary: out(daysFromNow(-1), daysFromNow(2)),
+        secondary: avail("* Secondary Grace Hopper — available"),
+        nextPrimary: avail("* Next primary Alan Turing — available"),
+        nextSecondary: avail("* Next secondary Ada Lovelace — available"),
+      }),
+    );
+
+    assert.equal(s.kind, CoverageSummaryKind.SomeOut);
+    assert.deepEqual(s.out, [CoverageRole.Primary]);
+  });
+
+  it("still reports all available when only some roles could be resolved", () => {
+    const s = summarize(
+      coverageWith({ primary: avail("* Primary Ada Lovelace — available") }),
+    );
+
+    assert.equal(s.kind, CoverageSummaryKind.AllAvailable);
+    assert.equal(s.unverified.length, 3, "the rest are named as unverified");
+  });
+
+  // The distinction the whole summary exists for.
+  it("does not report all available when the page carried no check", () => {
+    const s = summarize(undefined);
+
+    assert.equal(s.kind, CoverageSummaryKind.NotChecked);
+  });
+
+  it("does not report all available when a check resolved nobody", () => {
+    const s = summarize(coverageWith({}));
+
+    assert.equal(s.kind, CoverageSummaryKind.NotChecked);
+  });
+
+  it("reports the failure and its reason when the check could not complete", () => {
+    const s = summarize({
+      unavailableReason: "Slack unreachable",
+      roles: allUnknown(),
+    });
+
+    assert.equal(s.kind, CoverageSummaryKind.CheckFailed);
+    assert.equal(s.reason, "Slack unreachable");
+  });
+
+  it("lists away roles in rotation order, not discovery order", () => {
+    const s = summarize(
+      coverageWith({
+        nextSecondary: out(daysFromNow(1), daysFromNow(3)),
+        primary: out(daysFromNow(-1), daysFromNow(1)),
+      }),
+    );
+
+    assert.deepEqual(s.out, [CoverageRole.Primary, CoverageRole.NextSecondary]);
+  });
+
+  it("does not count a lapsed absence as someone being away", () => {
+    const s = summarize(
+      coverageWith({
+        primary: out(daysFromNow(-6), daysFromNow(-3)),
+        secondary: avail("* Secondary Grace Hopper — available"),
+      }),
+    );
+
+    assert.equal(s.kind, CoverageSummaryKind.AllAvailable);
+  });
+});

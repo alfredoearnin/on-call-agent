@@ -1,10 +1,22 @@
-import { ShieldCheck, LifeBuoy, ArrowRight, AlertTriangle } from "lucide-react";
+import {
+  ShieldCheck,
+  LifeBuoy,
+  ArrowRight,
+  AlertTriangle,
+  CalendarCheck,
+  HelpCircle,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { fmtDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Coverage, CoverageRole } from "@/lib/constants";
-import { isUpcoming, type CoverageAssessments } from "@/lib/people/coverage";
+import {
+  CoverageSummaryKind,
+  isUpcoming,
+  type CoverageAssessments,
+  type CoverageSummary,
+} from "@/lib/people/coverage";
 
 interface OnCallBannerProps {
   primary?: string | null;
@@ -20,6 +32,8 @@ interface OnCallBannerProps {
   tz: string;
   /** Per-role availability from the handoff page's coverage check. */
   coverage?: CoverageAssessments;
+  /** What to say about availability as a whole — including the all-clear. */
+  coverageSummary?: CoverageSummary;
   /** Evaluated once by the page so the banner does no clock reads of its own. */
   now?: Date;
 }
@@ -39,6 +53,7 @@ export function OnCallBanner({
   windowEnd,
   tz,
   coverage,
+  coverageSummary,
   now = new Date(),
 }: OnCallBannerProps) {
   const showNext = Boolean(nextPrimary || nextSecondary);
@@ -49,18 +64,7 @@ export function OnCallBanner({
     [CoverageRole.NextPrimary]: nextPrimary,
     [CoverageRole.NextSecondary]: nextSecondary,
   };
-  const absent = coverage
-    ? ROLE_ORDER.filter(
-        (r) => coverage[r].state === Coverage.OutOfOffice && names[r],
-      )
-    : [];
-  // Surfaced only when the page actually tried and failed. A page that predates the
-  // check says nothing, rather than nagging about every historical week.
-  const uncheckable =
-    coverage?.[CoverageRole.Primary].state === Coverage.Unknown &&
-    coverage[CoverageRole.Primary].evidence.includes("could not be checked")
-      ? coverage[CoverageRole.Primary].evidence
-      : null;
+  const absent = coverageSummary?.out.filter((r) => names[r]) ?? [];
 
   return (
     <Card className="overflow-hidden">
@@ -86,29 +90,17 @@ export function OnCallBanner({
         </div>
       )}
 
-      {absent.length > 0 && (
-        <div className="flex items-start gap-2 border-b border-border bg-warn/10 px-4 py-2 text-xs text-warn">
-          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-          <div className="space-y-0.5">
-            {absent.map((role) => (
-              <p key={role}>
-                <span className="font-semibold">
-                  {names[role]} ({ROLE_LABEL[role]}) is out of office
-                  {absenceWindow(coverage![role], now, tz)}.
-                </span>{" "}
-                {role === CoverageRole.Primary || role === CoverageRole.Secondary
-                  ? "Confirm someone is carrying the page before relying on this rotation."
-                  : "Arrange cover before the handoff."}
-              </p>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {uncheckable && (
-        <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
-          {uncheckable}
-        </div>
+      {coverageSummary && (
+        <CoverageStrip
+          summary={coverageSummary}
+          absent={absent}
+          names={names}
+          coverage={coverage}
+          windowStart={windowStart}
+          windowEnd={windowEnd}
+          now={now}
+          tz={tz}
+        />
       )}
 
       <div className="grid gap-px bg-border sm:grid-cols-2">
@@ -248,4 +240,113 @@ function absenceWindow(
   if (isUpcoming(a, now) && a.from) return ` from ${fmtDate(a.from, tz)}`;
   if (a.to) return ` until ${fmtDate(a.to, tz)}${a.openEnded ? " (open-ended)" : ""}`;
   return "";
+}
+
+/**
+ * Where the handoff page's availability check gets stated — including when it found
+ * nothing. Silence used to cover two very different cases ("nobody is away" and
+ * "nobody checked"), so each of the four outcomes now says which one it is, and the
+ * provenance line says where the answer came from.
+ */
+function CoverageStrip({
+  summary,
+  absent,
+  names,
+  coverage,
+  windowStart,
+  windowEnd,
+  now,
+  tz,
+}: {
+  summary: CoverageSummary;
+  absent: CoverageRole[];
+  names: Record<CoverageRole, string | null | undefined>;
+  coverage?: CoverageAssessments;
+  windowStart: Date | string;
+  windowEnd: Date | string;
+  now: Date;
+  tz: string;
+}) {
+  const window = `${fmtDate(windowStart, tz)} → ${fmtDate(windowEnd, tz)}`;
+
+  if (summary.kind === CoverageSummaryKind.SomeOut && absent.length > 0) {
+    return (
+      <div className="border-b border-border bg-warn/10 px-4 py-2 text-xs text-warn">
+        <div className="flex items-start gap-2">
+          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+          <div className="space-y-0.5">
+            {absent.map((role) => (
+              <p key={role}>
+                <span className="font-semibold">
+                  {names[role]} ({ROLE_LABEL[role]}) is out of office
+                  {coverage ? absenceWindow(coverage[role], now, tz) : ""}.
+                </span>{" "}
+                {role === CoverageRole.Primary || role === CoverageRole.Secondary
+                  ? "Confirm someone is carrying the page before relying on this rotation."
+                  : "Arrange cover before the handoff."}
+              </p>
+            ))}
+          </div>
+        </div>
+        <Provenance unverified={summary.unverified} names={names} />
+      </div>
+    );
+  }
+
+  if (summary.kind === CoverageSummaryKind.AllAvailable) {
+    return (
+      <div className="border-b border-border bg-ok/10 px-4 py-2 text-xs text-ok">
+        <div className="flex items-start gap-2">
+          <CalendarCheck className="mt-px h-3.5 w-3.5 shrink-0" />
+          <p>
+            <span className="font-semibold">
+              No planned time off in this rotation.
+            </span>{" "}
+            Nobody on call is out of office during {window} or at the next
+            handoff.
+          </p>
+        </div>
+        <Provenance unverified={summary.unverified} names={names} />
+      </div>
+    );
+  }
+
+  // CheckFailed and NotChecked both mean "we do not know", and are kept visually
+  // quiet rather than alarming — but they are never silent, because silence would
+  // read as an all-clear.
+  return (
+    <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
+      <div className="flex items-start gap-2">
+        <HelpCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+        <p>
+          {summary.kind === CoverageSummaryKind.CheckFailed
+            ? `Availability could not be checked${summary.reason ? ` (${summary.reason})` : ""} — verify manually before relying on this rotation.`
+            : "The handoff page carried no availability check, so nobody's time off was verified. This is not an all-clear."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Names the source. Out-of-office is read from Slack because the EarnIn handbook
+ * requires it for time off — worth stating, since it also bounds what the check can
+ * see: someone who never set a status will not appear here.
+ */
+function Provenance({
+  unverified,
+  names,
+}: {
+  unverified: CoverageRole[];
+  names: Record<CoverageRole, string | null | undefined>;
+}) {
+  const missing = unverified.filter((r) => names[r]);
+  return (
+    <p className="mt-1 pl-[1.375rem] text-[11px] text-muted-foreground">
+      Read from Slack out-of-office status, which the EarnIn handbook requires
+      for time off.
+      {missing.length > 0 &&
+        ` Not verified for ${missing.map((r) => names[r]).join(", ")}.`}
+    </p>
+  );
 }

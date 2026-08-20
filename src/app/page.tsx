@@ -16,6 +16,7 @@ import { OnCallBanner } from "@/components/on-call-banner";
 import {
   assessCoverage,
   deserializeCoverage,
+  summarizeCoverage,
 } from "@/lib/people/coverage";
 import { fmtDate, fmtDateTime, statusTone, statusLabel, trendArrow } from "@/lib/format";
 
@@ -32,6 +33,8 @@ export default async function OverviewPage() {
   ]);
   const tz = settings?.timezone ?? cfg.team.timezone;
   const now = new Date();
+  const pageCoverage = deserializeCoverage(run?.coverageJson);
+  const coverageAssessments = assessCoverage({ coverage: pageCoverage, now });
 
   if (!run) {
     return (
@@ -72,10 +75,8 @@ export default async function OverviewPage() {
         windowStart={run.windowStart}
         windowEnd={run.windowEnd}
         tz={tz}
-        coverage={assessCoverage({
-          coverage: deserializeCoverage(run.coverageJson),
-          now,
-        })}
+        coverage={coverageAssessments}
+        coverageSummary={summarizeCoverage(pageCoverage, coverageAssessments)}
         now={now}
       />
 
