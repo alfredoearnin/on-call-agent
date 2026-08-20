@@ -135,6 +135,11 @@ or any Slack message**, scrub it:
   shape to stay useful (e.g. "duplicate funnel cashout for `<user-id redacted>`").
 - **Keep** infra/service identifiers: monitor IDs, alert IDs, service/job names, cluster names,
   env scopes, Datadog/incident.io URLs. Those are not customer PII.
+- **Colleague absence (Step 1 coverage check).** The handoff page is committed to git, so
+  anything written there is permanent and present in every clone. Record only **who** is out
+  and **which dates** — that is coverage information, the same character as the shift windows
+  already on the page. Never write the reason, the leave type, a Slack status verbatim, or any
+  medical, family, or personal detail, even when the Slack status states it openly.
 - If a payload appears to contain real customer PII, redact it, render the rest, and append
   `(contains redacted customer identifiers)` to that line. Never echo the raw value anywhere,
   including thread replies. If in doubt whether a value is customer data, redact it.
@@ -167,6 +172,7 @@ Vulnerabilities: `searchJiraIssuesUsingJql`.
 
 **Slack** (`plugin-slack-slack`): `slack_search_channels`, `slack_search_public_and_private`
 (to find this week's root message), `slack_send_message_draft` → `slack_send_message`.
+`slack_search_users` + `slack_read_user_profile` (read-only, for the Step 1 coverage check).
 
 ---
 
@@ -401,6 +407,36 @@ next step.
    `MM/DD/YYYY Growth Team Ops Review`, the window dates, source ("incident.io + Datadog,
    read-only"), and "Last refreshed: <now> <timezone>". Include the on-call name(s) from
    `schedule_show` (current primary + next).
+   - **Coverage check — fixed wording.** Someone named on-call who is on PTO is the gap that
+     becomes an unanswered page, so check availability and state it. For each of the four
+     rotation names (primary, secondary, next primary, next secondary): resolve the person with
+     `slack_search_users`, read their status with `slack_read_user_profile`, and treat them as
+     out of office when the status emoji is an out-of-office emoji (`:palm_tree:`,
+     `:desert_island:`, `:airplane:`, `:ooo:`) **or** the status text contains OOO, PTO,
+     vacation, out of office, annual leave, or holiday. A status whose expiry has already
+     passed is **not** absence. Write the result verbatim in this shape, on its own lines,
+     directly beneath the on-call names:
+
+     `_Coverage check (Slack out-of-office, as of <now> <timezone>):_`
+     `* Primary **<name>** — out of office **<YYYY-MM-DD> → <YYYY-MM-DD>**`
+     `* Secondary **<name>** — available`
+     `* Next primary **<name>** — available`
+     `* Next secondary **<name>** — available`
+
+     Rules, all three mandatory:
+
+     - **Always write the header line when the check runs**, even when everyone is available.
+       Its absence is how the dashboard tells "everyone is available" apart from "the check
+       never happened", and those must not look the same.
+     - **When Slack cannot be reached, say so and do not guess:**
+
+       `_Coverage check: could not be completed (Slack unreachable) — verify availability manually._`
+
+       Do the same for a single person you cannot resolve: write
+       `* Primary **<name>** — could not be checked` rather than assuming they are available.
+     - **Record only the fact of absence and its dates.** Never the reason, the leave type, or
+       any medical or personal detail — see the redaction rules above. If the Slack status has
+       no expiry, use the on-call week's end date and add `(open-ended)` after the range.
 2. **`<h2>` SLOs / SLAs (15 minutes)** — links **and** the auto-summary live **here**, before
    Incidents (verify ordering in the published page; don't let them drift below later sections).
    - Bulleted links: Consolidated PENG-Growth Dashboard (`dashboard_url`), PENG Bugs OOSLA
