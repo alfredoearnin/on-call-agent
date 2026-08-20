@@ -1,5 +1,20 @@
 import { getConfig, canApply } from "@/lib/config";
-import { getRuns, getSourceSummary } from "@/lib/queries";
+import {
+  getAutomationHealth,
+  getLastAutomationTriggers,
+  getRuns,
+  getSourceSummary,
+} from "@/lib/queries";
+import { AUTOMATIONS, staleHealthCheckWarning } from "@/lib/automations/meta";
+import {
+  automationEnvNames,
+  canTriggerAutomation,
+} from "@/lib/automations/secrets";
+import { AutomationKey } from "@/lib/constants";
+import {
+  AutomationPanel,
+  type AutomationRow,
+} from "@/components/automation-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SyncNowButton } from "@/components/sync-now-button";
@@ -17,11 +32,40 @@ function runTone(status: string): "ok" | "warn" | "alert" | "neutral" {
 
 export default async function SettingsPage() {
   const cfg = getConfig();
-  const [{ weeksIngested, latest }, runs] = await Promise.all([
-    getSourceSummary(),
-    getRuns(15),
-  ]);
+  const now = new Date();
+  const [{ weeksIngested, latest }, runs, health, lastTriggers] =
+    await Promise.all([
+      getSourceSummary(),
+      getRuns(15),
+      getAutomationHealth(now),
+      getLastAutomationTriggers(),
+    ]);
   const tz = cfg.team.timezone;
+
+  // Only scalars reach the panel — never cfg, whose automations block sits beside
+  // the secrets module and whose spread into a client component would leak.
+  const automationRows: AutomationRow[] = health.length
+    ? AUTOMATIONS.map((meta): AutomationRow => {
+        const lastHealthCheck =
+          lastTriggers[AutomationKey.HealthCheck]?.triggeredAt ?? null;
+        return {
+          key: meta.key,
+          step: meta.step,
+          label: meta.label,
+          produces: meta.produces,
+          promptFile: meta.promptFile,
+          consoleUrl: cfg.automations.consoleUrl[meta.key],
+          mode: canTriggerAutomation(meta.key) ? "real" : "blocked",
+          missingEnv: automationEnvNames(meta.key),
+          health: health.find((h) => h.key === meta.key),
+          lastTriggeredAt: lastTriggers[meta.key]?.triggeredAt ?? null,
+          warning:
+            meta.key === AutomationKey.DashboardRefresh
+              ? staleHealthCheckWarning(lastHealthCheck, now)
+              : null,
+        };
+      })
+    : [];
 
   const sourceLabel = cfg.demoMode
     ? "Demo (bundled sample data)"
@@ -104,6 +148,8 @@ export default async function SettingsPage() {
           </p>
         </CardContent>
       </Card>
+
+      <AutomationPanel rows={automationRows} />
 
       <Card>
         <CardHeader>

@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { HttpError } from "@/lib/clients/http";
 import {
   HEALTH_CHECK_SETTLE_MS,
+  blocksRetry,
   TRIGGER_DEBOUNCE_MS,
   isAutomationKey,
   shouldDebounceTrigger,
@@ -71,6 +72,27 @@ describe("shouldDebounceTrigger", () => {
 
   it("allows the first ever trigger", () => {
     assert.equal(shouldDebounceTrigger(null, NOW), false);
+  });
+});
+
+describe("blocksRetry", () => {
+  it("blocks a retry after a run was successfully started", () => {
+    assert.equal(blocksRetry({ status: "triggered", httpStatus: null }), true);
+  });
+
+  // A timeout is the dangerous case: Cursor never answered, so the request may
+  // well have landed and started a run. Retrying at once could double-fire.
+  it("blocks a retry after a timeout, which may have started a run anyway", () => {
+    assert.equal(blocksRetry({ status: "failed", httpStatus: null }), true);
+  });
+
+  it("allows an immediate retry when cursor answered with a rejection", () => {
+    assert.equal(blocksRetry({ status: "failed", httpStatus: 401 }), false);
+    assert.equal(blocksRetry({ status: "failed", httpStatus: 503 }), false);
+  });
+
+  it("allows a retry after an attempt that was never sent", () => {
+    assert.equal(blocksRetry({ status: "blocked", httpStatus: null }), false);
   });
 });
 

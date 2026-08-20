@@ -91,6 +91,25 @@ export function staleHealthCheckWarning(
  */
 export const TRIGGER_DEBOUNCE_MS = 30_000;
 
+/**
+ * Whether a past attempt should block an immediate retry.
+ *
+ * The distinction is what we know about whether a run STARTED:
+ *   - triggered            → a run started. Retrying duplicates it.
+ *   - failed, with status  → Cursor answered and rejected it, so no run started.
+ *                            Safe to retry at once (e.g. after fixing the header).
+ *   - failed, no status    → a timeout or network error. The request may well have
+ *                            landed, so treat it like a success and debounce.
+ *   - blocked              → nothing was ever sent.
+ */
+export function blocksRetry(attempt: {
+  status: string;
+  httpStatus: number | null;
+}): boolean {
+  if (attempt.status === "triggered") return true;
+  return attempt.status === "failed" && attempt.httpStatus === null;
+}
+
 export function shouldDebounceTrigger(
   lastTriggeredAt: Date | null,
   now: Date,
