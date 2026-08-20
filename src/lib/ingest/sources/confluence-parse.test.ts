@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { parseOnCall, parseWindow } from "@/lib/ingest/sources/confluence-parse";
+import {
+  parseOnCall,
+  parseRefreshedAt,
+  parseWindow,
+} from "@/lib/ingest/sources/confluence-parse";
 
 const TZ = "America/Los_Angeles";
 const asDate = (d?: Date) => d?.toISOString().slice(0, 10);
@@ -168,6 +172,179 @@ describe("parseOnCall", () => {
     for (const file of files) {
       const schedule = parseOnCall(readFileSync(join(dir, file), "utf8"));
       assert.ok(schedule?.primary, `${file}: no primary parsed`);
+    }
+  });
+});
+
+/*
+ * The refresh stamp is the only evidence the dashboard has that the upstream
+ * health-check automation ran, and an LLM rewrites the wording each day. These
+ * cases pin the forms that have actually been published, and — just as important —
+ * the refresh-adjacent prose that must NOT be mistaken for a stamp, because a
+ * false positive would report a stale page as fresh.
+ */
+describe("parseRefreshedAt", () => {
+  it("reads the live banner's stamp with the zone in parentheses", () => {
+    const refresh = parseRefreshedAt(
+      "\u{1F504} **Live page** — refreshed daily during the on-call week " +
+        "(2026-08-18 → 2026-08-25). Last refreshed **2026-08-19 8:00 AM PT " +
+        "(America/Los_Angeles)** (\\~1.3 days into the week).",
+      TZ,
+    );
+
+    assert.equal(asDate(refresh?.at), "2026-08-19");
+    assert.equal(refresh?.text, "2026-08-19 8:00 AM PT (America/Los_Angeles)");
+  });
+
+  it("reads the header stamp written with a colon", () => {
+    const refresh = parseRefreshedAt(
+      "Sources: incident.io + Datadog · Last refreshed: **2026-08-19 8:00 AM PT**.",
+      TZ,
+    );
+
+    assert.equal(asDate(refresh?.at), "2026-08-19");
+  });
+
+  it("reads the frozen page's `Final refresh completed` wording", () => {
+    const refresh = parseRefreshedAt(
+      "\u{1F512} **Frozen — final state at week close (2026-08-18).** Final refresh " +
+        "completed **2026-08-18 12:35 PM PT (America/Los_Angeles)** — later than the " +
+        "Tuesday handoff because both connectors were down.",
+      TZ,
+    );
+
+    assert.equal(asDate(refresh?.at), "2026-08-18");
+  });
+
+  it("reads a single-digit hour", () => {
+    const eight = parseRefreshedAt("Last refreshed 2026-08-19 8:00 AM PT.", TZ);
+    const twelve = parseRefreshedAt("Last refreshed 2026-08-19 12:57 PM PT.", TZ);
+
+    assert.ok(eight?.at);
+    assert.ok(twelve?.at);
+    assert.ok(twelve.at.getTime() > eight.at.getTime(), "12:57 PM sorts after 8:00 AM");
+  });
+
+  it("resolves the stamp in the zone the page names, not the PT abbreviation", () => {
+    const pacific = parseRefreshedAt(
+      "Last refreshed **2026-08-19 8:00 AM PT (America/Los_Angeles)**.",
+      TZ,
+    );
+    const eastern = parseRefreshedAt(
+      "Last refreshed **2026-08-19 8:00 AM PT (America/New_York)**.",
+      TZ,
+    );
+
+    assert.ok(pacific?.at && eastern?.at);
+    assert.equal(
+      pacific.at.getTime() - eastern.at.getTime(),
+      3 * 60 * 60 * 1000,
+      "the named zone wins over the PT abbreviation",
+    );
+  });
+
+  it("falls back to the team timezone when the page names no zone", () => {
+    const refresh = parseRefreshedAt("Last refreshed: 2026-08-19 8:00 AM PT.", TZ);
+
+    assert.equal(asDate(refresh?.at), "2026-08-19");
+  });
+
+  it("keeps the stamp verbatim, escaped markdown and all", () => {
+    const refresh = parseRefreshedAt(
+      "Last refreshed **2026-08-19 8:00 AM PT (America/Los_Angeles)**.",
+      TZ,
+    );
+
+    assert.equal(refresh?.text, "2026-08-19 8:00 AM PT (America/Los_Angeles)");
+  });
+
+  it("prefers the first stamp on the page over the footer's repeat", () => {
+    const refresh = parseRefreshedAt(
+      "Last refreshed **2026-08-19 8:00 AM PT**.\n" +
+        "## Footer\nLast refreshed: 2026-08-12 9:00 AM PT.",
+      TZ,
+    );
+
+    assert.equal(asDate(refresh?.at), "2026-08-19");
+  });
+
+  it("returns undefined when the page has no refresh line", () => {
+    assert.equal(
+      parseRefreshedAt("# Growth Team Ops Review — Weekly Handoff", TZ),
+      undefined,
+    );
+  });
+
+  it('does not read "New since the last refresh (Jul 25 → Jul 26)" as a stamp', () => {
+    assert.equal(
+      parseRefreshedAt(
+        "New since the last refresh (Jul 25 → Jul 26): the 2026-07-26 pair re-fired.",
+        TZ,
+      ),
+      undefined,
+    );
+  });
+
+  it('does not read "at this morning\'s 08:02 AM refresh" as a stamp', () => {
+    assert.equal(
+      parseRefreshedAt(
+        "Monitor 2026-08-19 read OK at this morning's 08:02 AM refresh.",
+        TZ,
+      ),
+      undefined,
+    );
+  });
+
+  it("does not read the banner's `refreshed daily` preamble as a stamp", () => {
+    assert.equal(
+      parseRefreshedAt(
+        "Live page — refreshed daily during the on-call week (2026-08-18 → 2026-08-25).",
+        TZ,
+      ),
+      undefined,
+    );
+  });
+
+  it("leaves the instant undefined when the stamp names an unknown zone", () => {
+    const refresh = parseRefreshedAt(
+      "Last refreshed **2026-08-19 8:00 AM XX (Middle/Nowhere)**.",
+      TZ,
+    );
+
+    assert.ok(refresh, "the stamp is still located");
+    assert.equal(asDate(refresh?.at), "2026-08-19", "falls back to the team zone");
+  });
+
+  it("stays fast on input built to trigger regex backtracking", () => {
+    const started = Date.now();
+    parseRefreshedAt(`last refreshed${" ".repeat(5_000)}X`, TZ);
+    parseRefreshedAt(`last refreshed${"*".repeat(8_000)}X`, TZ);
+    parseRefreshedAt("last refresh completed ".repeat(4_000), TZ);
+
+    assert.ok(
+      Date.now() - started < 1_000,
+      `parseRefreshedAt took ${Date.now() - started}ms on adversarial input`,
+    );
+  });
+
+  // Catches wording drift on the next LLM-authored page. The corpus legitimately
+  // contains three pre-July pages with no stamp at all, so the assertion has to
+  // encode both directions: locate a stamp where one exists, invent none where it
+  // does not.
+  it("reads a stamp from every handoff page that publishes one", () => {
+    const dir = join(process.cwd(), "data", "confluence");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+    assert.ok(files.length > 0, "no handoff pages found to check");
+
+    for (const file of files) {
+      const md = readFileSync(join(dir, file), "utf8");
+      const refresh = parseRefreshedAt(md, TZ);
+
+      if (!/last\s+refreshed|refresh(?:ed)?\s+completed/i.test(md)) {
+        assert.equal(refresh, undefined, `${file}: invented a stamp on a page without one`);
+        continue;
+      }
+      assert.ok(refresh?.at, `${file}: page states a refresh but no instant was parsed`);
     }
   });
 });

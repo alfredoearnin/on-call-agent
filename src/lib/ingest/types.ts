@@ -119,6 +119,24 @@ export interface NormalizedSchedule {
   verifiedAsOf?: string;
 }
 
+/**
+ * The handoff page's own account of when it was last rewritten — the only signal
+ * the dashboard has that the upstream health-check automation ran.
+ */
+export interface PageRefresh {
+  /** Resolved instant, for the staleness arithmetic. Derived — may be absent. */
+  at?: Date;
+  /**
+   * The stamp verbatim, e.g. `2026-08-19 8:00 AM PT (America/Los_Angeles)`. Kept
+   * so the UI can always quote what the page actually said, even when the wording
+   * drifted past what `at` could resolve. That is the difference between "I don't
+   * know" and "I have nothing".
+   */
+  text: string;
+  /** True when only a date was written, so `at` is midnight, not the real hour. */
+  dateOnly?: boolean;
+}
+
 /** Pre-computed KPI numbers (e.g. parsed from the Confluence summary). When
  * present, persistBundle uses these instead of computing from the alert set. */
 export interface KpiOverride {
@@ -143,6 +161,8 @@ export interface IngestBundle {
   kpis?: KpiOverride;
   /** The on-call week window this bundle reports (e.g. from a handoff page). */
   window?: { start: Date; end: Date };
+  /** The page's "Last refreshed" stamp. Absent on pages published before it existed. */
+  pageRefresh?: PageRefresh;
   sourceStatus: {
     datadog: SourceStatus;
     incidentio: SourceStatus;

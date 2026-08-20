@@ -16,6 +16,7 @@ import type {
   NormalizedMonitor,
   NormalizedRecommendation,
   NormalizedSchedule,
+  PageRefresh,
   ProposedPatch,
 } from "@/lib/ingest/types";
 
@@ -122,6 +123,74 @@ export function parseWindow(
   const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
   if (!start.isValid || !end.isValid) return undefined;
   return { start: start.toJSDate(), end: end.toJSDate() };
+}
+
+// ── Page refresh stamp ──────────────────────────────────────────────────────
+
+/**
+ * The page's own claim about when the health-check automation last rewrote it.
+ * This is the ONLY evidence the dashboard has that automation 1 ran, so a silent
+ * parse failure must degrade to "unknown", never to "failed".
+ *
+ * The label drifts, because an LLM writes each page: `Last refreshed **…**`,
+ * `**Last refreshed: …**`, and on a frozen week `Final refresh completed **…**`.
+ * `refresh` alone is deliberately NOT accepted — pages also say "New since the
+ * last refresh (Jul 25 → Jul 26)", "at this morning's 08:02 AM refresh", and
+ * "refreshed daily during the on-call week", none of which is a stamp.
+ *
+ * Every quantifier is bounded, for the same reason as the rotation regexes: an
+ * unbounded `\s*` beside a capture lets the engine split a whitespace run
+ * exponentially many ways and hang the ingest.
+ */
+const REFRESH_LABEL = String.raw`(?:last\s{1,4}refreshed|(?:final\s{1,4})?refresh(?:ed)?\s{1,4}completed)`;
+/** `2026-08-19 8:00 AM PT (America/Los_Angeles)` — time, abbreviation and zone all optional. */
+const REFRESH_STAMP =
+  String.raw`(\d{4}-\d{2}-\d{2})(?:[\s*]{1,6}(\d{1,2}:\d{2})\s{0,4}(AM|PM))?` +
+  String.raw`(?:\s{0,4}([A-Z]{2,4}))?(?:\s{0,4}\(([A-Za-z]{2,12}\/[A-Za-z_]{2,20})\))?`;
+const REFRESHED_AT = new RegExp(
+  `${REFRESH_LABEL}[\\s:*_—-]{0,8}${REFRESH_STAMP}`,
+  "i",
+);
+
+/**
+ * `tz` is the fallback zone used when the page names no IANA zone. The `PT`
+ * abbreviation is deliberately ignored: it is ambiguous between PDT and PST, and
+ * guessing would put the stamp an hour off across a DST boundary — enough to move
+ * it across local midnight and flip a health verdict. The page's own
+ * `(America/Los_Angeles)` is authoritative when present.
+ */
+export function parseRefreshedAt(
+  md: string,
+  tz: string,
+): PageRefresh | undefined {
+  for (const line of md.split("\n")) {
+    const m = REFRESHED_AT.exec(line.replace(/\s+/g, " "));
+    if (!m) continue;
+
+    const [, date, time, meridiem, , namedZone] = m;
+    const text = m[0]
+      .replace(/\*\*/g, "")
+      .replace(/\\/g, "")
+      .replace(/^[^0-9]*/, "")
+      .replace(/[.\s]+$/, "")
+      .trim();
+
+    const zone =
+      namedZone && DateTime.local({ zone: namedZone }).isValid ? namedZone : tz;
+    const dt =
+      time && meridiem
+        ? DateTime.fromFormat(`${date} ${time} ${meridiem}`, "yyyy-MM-dd h:mm a", {
+            zone,
+          })
+        : DateTime.fromISO(date, { zone }).startOf("day");
+
+    return {
+      at: dt.isValid ? dt.toJSDate() : undefined,
+      text,
+      dateOnly: !time,
+    };
+  }
+  return undefined;
 }
 
 // ── On-call schedule ────────────────────────────────────────────────────────
@@ -493,6 +562,7 @@ export function parseConfluence(
   const window = parseWindow(handoffMd, tz);
   const schedule = parseOnCall(handoffMd);
   const kpis = parseKpis(handoffMd);
+  const pageRefresh = parseRefreshedAt(handoffMd, tz);
   const recommendations = parseRecommendations(handoffMd);
   const alerts = [
     ...parseRequiredAttention(handoffMd, tz),
@@ -511,11 +581,14 @@ export function parseConfluence(
     schedule,
     kpis: kpis ?? undefined,
     window,
+    pageRefresh,
     sourceStatus: {
       datadog: SourceStatus.Skipped,
       incidentio: SourceStatus.Skipped,
       jira: SourceStatus.Skipped,
     },
-    notes: `Confluence source${kpis ? "" : " (KPI summary not parsed)"}`,
+    notes: `Confluence source${kpis ? "" : " (KPI summary not parsed)"}${
+      pageRefresh ? "" : " (no refresh stamp)"
+    }`,
   };
 }

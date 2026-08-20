@@ -58,6 +58,14 @@ model IngestionRun {
   onCallUnverified   Boolean @default(false)
   onCallVerifiedAsOf String?
 
+  // The handoff page's own "Last refreshed" stamp. handoffRefreshedAt is the
+  // resolved instant (used for the staleness verdict); handoffRefreshedText is the
+  // stamp as the page wrote it, so the UI can quote a stamp we located but could
+  // not resolve. NULL means the page carried no stamp, which makes the upstream
+  // health-check automation's status UNKNOWN — never "failed".
+  handoffRefreshedAt   DateTime?
+  handoffRefreshedText String?
+
   error String?
   notes String?
 
@@ -248,4 +256,41 @@ model AppliedChange {
 
   @@index([monitorId])
   @@index([appliedAt])
+}
+
+/// Audit trail for dashboard-initiated Cursor Automation webhook triggers, and the
+/// source of "last triggered from here" on the Settings page. Records only THAT a
+/// trigger was attempted and how it came out — never the webhook URL and never its
+/// API key. Never deleted.
+///
+/// No back-relation to any existing model, deliberately: Prisma's SQLite provider
+/// rewrites a whole table whenever its columns or FKs change, and prisma/oncall.db
+/// is committed, so a relation here would turn every migration into a large binary
+/// diff. `precededById` follows the existing loose `runId` convention instead.
+///
+/// No timestamp pair either (cf. AppliedChange.appliedAt/revertedAt): a
+/// fire-and-forget trigger has exactly one lifecycle event, because Cursor gives us
+/// nothing to observe afterwards. If a run-status API ever ships, `runId` and
+/// `observedAt` are the natural additions then.
+model AutomationTrigger {
+  id            String @id @default(cuid())
+  automationKey String // AutomationKey
+  status        String @default("triggered") // TriggerStatus
+
+  /// HTTP status Cursor returned, when it returned one.
+  httpStatus Int?
+  /// Sanitized text from triggerFailureMessage. Contains no URL, key, or body.
+  error      String?
+  operator   String
+
+  /// True when #2 was fired while #1's settle window was still open — the forensic
+  /// answer to "did we knowingly parse a possibly-stale page?".
+  staleWarning Boolean @default(false)
+  /// Bare id of the preceding health_check trigger, if this one followed one.
+  precededById String?
+
+  triggeredAt DateTime @default(now())
+
+  @@index([automationKey, triggeredAt])
+  @@index([triggeredAt])
 }

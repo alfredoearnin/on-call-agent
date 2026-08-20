@@ -19,7 +19,11 @@ import { classifyRecommendations } from "@/lib/ingest/tuning";
 import { persistBundle } from "@/lib/ingest/persist";
 import { reconcileFeedback } from "@/lib/ingest/feedback";
 import { acquireLock, releaseLock } from "@/lib/ingest/lock";
-import type { IngestBundle, NormalizedSchedule } from "@/lib/ingest/types";
+import type {
+  IngestBundle,
+  NormalizedSchedule,
+  PageRefresh,
+} from "@/lib/ingest/types";
 
 export interface RunOptions {
   trigger?: Trigger;
@@ -93,6 +97,27 @@ function scheduleWarnings(schedule?: NormalizedSchedule): string[] {
   }
 
   return warnings;
+}
+
+/**
+ * The refresh stamp is free prose too, and it is the only evidence the dashboard
+ * has that the upstream health-check automation ran. Without it that automation
+ * reads as "unknown" forever, so a reworded line must report itself rather than
+ * decaying into a permanent shrug.
+ */
+function refreshWarnings(pageRefresh?: PageRefresh): string[] {
+  if (!pageRefresh) {
+    return [
+      'handoff: no "Last refreshed" stamp on the page — the health-check ' +
+        "automation's status cannot be observed. Check the wording against on-call.md.",
+    ];
+  }
+  if (!pageRefresh.at) {
+    return [
+      `handoff: refresh stamp "${pageRefresh.text}" could not be resolved to a time.`,
+    ];
+  }
+  return [];
 }
 
 /** Minimal "next daily run" from a `m h * * *` cron; falls back to +1 day. */
@@ -200,7 +225,10 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
     );
     const status = anyUnavailable ? RunStatus.Partial : RunStatus.Success;
 
-    const warnings = scheduleWarnings(newest.schedule);
+    const warnings = [
+      ...scheduleWarnings(newest.schedule),
+      ...(source === "confluence" ? refreshWarnings(newest.pageRefresh) : []),
+    ];
 
     const notesParts = [
       source === "confluence"
@@ -229,6 +257,8 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
         nextSecondaryOnCall: newest.schedule?.nextSecondary,
         onCallUnverified: newest.schedule?.unverified ?? false,
         onCallVerifiedAsOf: newest.schedule?.verifiedAsOf,
+        handoffRefreshedAt: newest.pageRefresh?.at,
+        handoffRefreshedText: newest.pageRefresh?.text,
         ...(result?.kpis ?? {}),
       },
     });
