@@ -136,6 +136,9 @@ model AlertFire {
   disposition      String? // AlertDisposition
   firingKind       String? // FiringKind (active/stale/resolved)
   firedAt          DateTime
+  /// False when the handoff page stated a day but no clock time. The UI must then
+  /// show no time rather than a confident wrong one — firedAt is only a day anchor.
+  firedAtTimeKnown Boolean  @default(true)
   resolvedAt       DateTime?
   ackedBy          String?
   ackLatencySec    Int?

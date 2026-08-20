@@ -53,12 +53,154 @@ function alertIdFrom(text: string): string | undefined {
   return m?.[1];
 }
 
-function parseDate(text: string, tz: string): Date | undefined {
-  const m = /(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}:\d{2}))?/.exec(text);
-  if (!m) return undefined;
-  const iso = m[2] ? `${m[1]}T${m[2]}` : m[1];
-  const dt = DateTime.fromISO(iso, { zone: tz });
-  return dt.isValid ? dt.toJSDate() : undefined;
+// ── Event times ─────────────────────────────────────────────────────────────
+
+/**
+ * When an alert fired, read out of the finding prose.
+ *
+ * The pages never write ISO dates for alert times. Surveying the corpus, they
+ * write `Aug 7 15:00 UTC`, `Fri Jul 31 18:23 PT`, `~2:18 AM PT Thu Aug 20`, or
+ * just `Mon Aug 17` with no clock time at all — and crucially both UTC and PT
+ * appear, 7 hours apart, so flattening them into the team zone is a real error.
+ *
+ * Two rules carry the honesty here:
+ *
+ * 1. The zone label on the page wins. `09:17 UTC` and `09:17 PT` are different
+ *    instants and must not be conflated.
+ * 2. A time the page did not state is NOT invented. `timeKnown: false` means the
+ *    day is known but the clock time is not, and callers must render it as such
+ *    rather than showing a confident wrong time. Returning `undefined` means we
+ *    know nothing — the previous `?? new Date()` fallback stamped alerts with
+ *    their ingest time, which is how a 02:17 AM page came to read as 11:10 AM.
+ *
+ * Quantifiers are bounded throughout, per the ReDoS discipline used by the other
+ * parsers in this file.
+ */
+export interface ParsedEventTime {
+  at: Date;
+  /** False when the page gave a date but no clock time. */
+  timeKnown: boolean;
+  /** The zone the instant was resolved in, for the record. */
+  zone: string;
+}
+
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** Zone abbreviations the pages use. PT/PST/PDT resolve via the team zone. */
+const UTC_LABEL = /^(utc|gmt|z)$/i;
+
+const ISO_AT = /(\d{4}-\d{2}-\d{2})(?:[\sT]{1,3}(\d{1,2}):(\d{2}))?/;
+/** `Aug 20 09:17 UTC`, `Fri Jul 31 18:23 PT`, `Mon Aug 17` */
+const MONTH_DAY_AT = new RegExp(
+  String.raw`(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]{0,6}\s{1,3})?` +
+    String.raw`(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]{0,7}\s{1,3}(\d{1,2})` +
+    String.raw`(?:\s{1,3}~?(\d{1,2}):(\d{2})\s{0,3}(am|pm)?\s{0,3}([a-z]{2,4})?)?`,
+  "i",
+);
+/** `~2:18 AM PT Thu Aug 20` — time first, date later in the sentence. */
+const TIME_FIRST = new RegExp(
+  String.raw`~?(\d{1,2}):(\d{2})\s{0,3}(am|pm)\s{0,3}([a-z]{2,4})?` +
+    String.raw`[^0-9]{0,40}?(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]{0,6}\s{1,3})?` +
+    String.raw`(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]{0,7}\s{1,3}(\d{1,2})`,
+  "i",
+);
+/** Prefer a timestamp introduced by a "fired" cue over acks and resolutions. */
+const FIRED_CUE = /fired(?:\s{1,3}(?:at|on))?\s{0,3}/i;
+const CUE_WINDOW = 60;
+
+export function parseEventTime(
+  text: string,
+  opts: { tz: string; window?: { start: Date; end: Date } },
+): ParsedEventTime | undefined {
+  const { tz, window } = opts;
+  const flat = text.replace(/\s+/g, " ");
+
+  // A "fired at …" clause is the authoritative one; acks and resolutions come
+  // later in the same sentence and must not win.
+  const cue = FIRED_CUE.exec(flat);
+  if (cue) {
+    const scoped = flat.slice(cue.index, cue.index + CUE_WINDOW);
+    const hit = matchAny(scoped, tz, window);
+    if (hit) return hit;
+  }
+  return matchAny(flat, tz, window);
+}
+
+function matchAny(
+  flat: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): ParsedEventTime | undefined {
+  const iso = ISO_AT.exec(flat);
+  if (iso) {
+    const zone = tz;
+    const dt = iso[2]
+      ? DateTime.fromISO(`${iso[1]}T${iso[2].padStart(2, "0")}:${iso[3]}`, { zone })
+      : DateTime.fromISO(iso[1], { zone }).startOf("day");
+    if (dt.isValid) return { at: dt.toJSDate(), timeKnown: Boolean(iso[2]), zone };
+  }
+
+  const timeFirst = TIME_FIRST.exec(flat);
+  if (timeFirst) {
+    const built = build({
+      month: timeFirst[5], day: timeFirst[6],
+      hour: timeFirst[1], minute: timeFirst[2],
+      meridiem: timeFirst[3], label: timeFirst[4], tz, window,
+    });
+    if (built) return built;
+  }
+
+  const md = MONTH_DAY_AT.exec(flat);
+  if (md) {
+    const built = build({
+      month: md[1], day: md[2],
+      hour: md[3], minute: md[4], meridiem: md[5], label: md[6], tz, window,
+    });
+    if (built) return built;
+  }
+
+  return undefined;
+}
+
+function build(p: {
+  month: string; day: string;
+  hour?: string; minute?: string; meridiem?: string; label?: string;
+  tz: string; window?: { start: Date; end: Date };
+}): ParsedEventTime | undefined {
+  const month = MONTHS[p.month.slice(0, 3).toLowerCase()];
+  const day = Number.parseInt(p.day, 10);
+  if (!month || !Number.isFinite(day)) return undefined;
+
+  // The pages never write a year on alert times, so take it from the on-call week
+  // and roll over when the month sits before the window (a Dec→Jan week).
+  const anchor = p.window?.start ?? new Date();
+  const anchorDt = DateTime.fromJSDate(anchor, { zone: p.tz });
+  const year = month < anchorDt.month - 6 ? anchorDt.year + 1 : anchorDt.year;
+
+  const timeKnown = Boolean(p.hour && p.minute);
+  let hour = timeKnown ? Number.parseInt(p.hour!, 10) : 0;
+  const minute = timeKnown ? Number.parseInt(p.minute!, 10) : 0;
+  const mer = p.meridiem?.toLowerCase();
+  if (mer === "pm" && hour < 12) hour += 12;
+  if (mer === "am" && hour === 12) hour = 0;
+
+  // The zone label on the page wins over the team zone. Anything unrecognised
+  // (or absent) falls back to the team zone, which is what the pages default to.
+  const zone = p.label && UTC_LABEL.test(p.label) ? "utc" : p.tz;
+
+  const dt = DateTime.fromObject(
+    { year, month, day, hour, minute },
+    { zone },
+  );
+  if (!dt.isValid) return undefined;
+  return {
+    at: timeKnown ? dt.toJSDate() : dt.startOf("day").toJSDate(),
+    timeKnown,
+    zone,
+  };
 }
 
 /** Return the body of a section between a heading and the next heading. */
@@ -581,7 +723,34 @@ function parseRecommendations(md: string): NormalizedRecommendation[] {
 
 // ── Alerts ──────────────────────────────────────────────────────────────────
 
-function parseRequiredAttention(md: string, tz: string): NormalizedAlert[] {
+/**
+ * `firedAt` is required by the schema, so an alert whose time the page never stated
+ * still needs an instant. Anchor it to the start of the on-call week — defensible,
+ * and it groups the alert into the right week — but record `firedAtTimeKnown: false`
+ * so the UI shows no clock time rather than a confident wrong one. The previous
+ * `?? new Date()` stamped these with the ingest time, which is how an alert that
+ * paged at 02:17 came to read as 11:10.
+ */
+function firedAtFrom(
+  text: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): { firedAt: Date; firedAtTimeKnown: boolean } {
+  const parsed = parseEventTime(text, { tz, window });
+  if (parsed) {
+    return { firedAt: parsed.at, firedAtTimeKnown: parsed.timeKnown };
+  }
+  return {
+    firedAt: window?.start ?? new Date(),
+    firedAtTimeKnown: false,
+  };
+}
+
+function parseRequiredAttention(
+  md: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): NormalizedAlert[] {
   const sec = section(md, /Required Human Attention/i);
   if (!sec) return [];
   const out: NormalizedAlert[] = [];
@@ -600,7 +769,7 @@ function parseRequiredAttention(md: string, tz: string): NormalizedAlert[] {
       status: /resolved|self-resolved|auto-resolved/i.test(finding) ? "resolved" : "firing",
       disposition: AlertDisposition.RequiredHumanAttention,
       firingKind: FiringKind.Resolved,
-      firedAt: parseDate(finding, tz) ?? new Date(),
+      ...firedAtFrom(finding, tz, window),
       env: clean(serviceCell) || undefined,
       timesFired: 1,
       finding,
@@ -615,6 +784,7 @@ function parseBulletAlerts(
   disposition: string | undefined,
   firingKind: string,
   tz: string,
+  window?: { start: Date; end: Date },
 ): NormalizedAlert[] {
   const sec = section(md, headingPattern);
   if (!sec) return [];
@@ -634,7 +804,7 @@ function parseBulletAlerts(
       status: firingKind === FiringKind.Stale ? "firing" : "resolved",
       disposition: disposition as NormalizedAlert["disposition"],
       firingKind: firingKind as NormalizedAlert["firingKind"],
-      firedAt: parseDate(text, tz) ?? new Date(),
+      ...firedAtFrom(text, tz, window),
       timesFired: 1,
       finding: text,
     });
@@ -696,9 +866,9 @@ export function parseConfluence(
   const coverage = parseCoverage(handoffMd, tz);
   const recommendations = parseRecommendations(handoffMd);
   const alerts = [
-    ...parseRequiredAttention(handoffMd, tz),
-    ...parseBulletAlerts(handoffMd, /Auto-Resolved/i, AlertDisposition.AutoResolved, FiringKind.Resolved, tz),
-    ...parseBulletAlerts(handoffMd, /Open Going Into Handoff/i, undefined, FiringKind.Stale, tz),
+    ...parseRequiredAttention(handoffMd, tz, window),
+    ...parseBulletAlerts(handoffMd, /Auto-Resolved/i, AlertDisposition.AutoResolved, FiringKind.Resolved, tz, window),
+    ...parseBulletAlerts(handoffMd, /Open Going Into Handoff/i, undefined, FiringKind.Stale, tz, window),
   ];
   const vuln = parseVuln(handoffMd);
   const monitors = collectMonitors(recommendations, alerts);

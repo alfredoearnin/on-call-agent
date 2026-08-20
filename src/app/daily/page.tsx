@@ -148,6 +148,7 @@ export default async function DailyPage({
             <CardTitle>Timeline</CardTitle>
             <p className="text-xs text-muted-foreground">
               By day, newest first · amber = human attention, green = auto-resolved
+              · times in your timezone, days grouped by the on-call week's
             </p>
           </CardHeader>
           <CardContent>

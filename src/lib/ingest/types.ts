@@ -39,6 +39,8 @@ export interface NormalizedAlert {
   disposition?: AlertDisposition;
   firingKind?: FiringKind;
   firedAt: Date;
+  /** False when the page stated a day but no clock time (or no time at all). */
+  firedAtTimeKnown?: boolean;
   resolvedAt?: Date;
   ackedBy?: string;
   ackLatencySec?: number;

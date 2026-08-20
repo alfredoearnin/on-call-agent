@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import { Coverage, CoverageRole } from "@/lib/constants";
 import {
   parseCoverage,
+  parseEventTime,
   parseOnCall,
   parseRefreshedAt,
   parseWindow,
@@ -520,3 +521,111 @@ const coverageBlock = () =>
   "* Secondary **Grace Hopper** — available\n" +
   "* Next primary **Alan Turing** — out of office **2026-08-25 → 2026-08-29** (open-ended)\n" +
   "* Next secondary **Ada Lovelace** — could not be checked\n";
+
+/*
+ * Alert times come out of free prose, and the pages never write ISO dates for them:
+ * they write "Aug 7 15:00 UTC", "Fri Jul 31 18:23 PT", "~2:18 AM PT Thu Aug 20".
+ * The old parser accepted only ISO and fell back to `new Date()` on failure, which
+ * silently stamped 9 of 33 alerts with their INGEST time — a plausible-looking wrong
+ * clock time on the timeline. These cases pin the real formats, the mixed zones
+ * (UTC and PT appear in the same corpus, 7 hours apart), and the refusal to invent
+ * a time that the page did not state.
+ */
+describe("parseEventTime", () => {
+  const WINDOW = {
+    start: new Date("2026-08-18T07:00:00.000Z"),
+    end: new Date("2026-08-25T07:00:00.000Z"),
+  };
+  const parse = (text: string, window = WINDOW) =>
+    parseEventTime(text, { tz: TZ, window });
+
+  it("reads a month-day time in UTC as UTC, not as team-local", () => {
+    const t = parse("monitor 313314019 fired at Aug 20 09:17 UTC on env:prod");
+
+    assert.equal(t?.at.toISOString(), "2026-08-20T09:17:00.000Z");
+    assert.equal(t?.timeKnown, true);
+  });
+
+  it("reads a month-day time marked PT in the team zone", () => {
+    const t = parse("the HPA monitor paged Jul 31 18:23 PT on production-eks-cluster");
+
+    // 18:23 PDT is 01:23Z the next day — the whole point of honouring the label.
+    assert.equal(t?.at.toISOString(), "2026-08-01T01:23:00.000Z");
+  });
+
+  it("does not read a UTC time as if it were team-local", () => {
+    const utc = parse("fired at Aug 20 09:17 UTC");
+    const pt = parse("fired at Aug 20 09:17 PT");
+
+    assert.notEqual(utc?.at.toISOString(), pt?.at.toISOString());
+    assert.equal(
+      (pt!.at.getTime() - utc!.at.getTime()) / 3_600_000,
+      7,
+      "PDT is UTC-7, so the same clock time is 7h later in absolute terms",
+    );
+  });
+
+  it("reads a 12-hour time with the date written after it", () => {
+    const t = parse("paged primary twice overnight (~2:18 AM PT Thu Aug 20)");
+
+    assert.equal(t?.at.toISOString(), "2026-08-20T09:18:00.000Z");
+  });
+
+  it("prefers the time introduced by a fired cue over later timestamps", () => {
+    const t = parse(
+      "fired at Aug 20 09:17 UTC; acked at 09:18:34 UTC; resolved 10:07 UTC",
+    );
+
+    assert.equal(t?.at.toISOString(), "2026-08-20T09:17:00.000Z");
+  });
+
+  it("infers the year from the on-call week rather than guessing today", () => {
+    const t = parse("fired Aug 20 09:17 UTC");
+
+    assert.equal(t?.at.getUTCFullYear(), 2026);
+  });
+
+  it("rolls the year over for a week that spans new year", () => {
+    const t = parse("fired Jan 2 09:17 UTC", {
+      start: new Date("2026-12-29T08:00:00.000Z"),
+      end: new Date("2027-01-05T08:00:00.000Z"),
+    });
+
+    assert.equal(t?.at.getUTCFullYear(), 2027);
+  });
+
+  it("still reads an ISO date and time", () => {
+    const t = parse("window opened 2026-08-20 09:17");
+
+    assert.equal(asDate(t?.at), "2026-08-20");
+    assert.equal(t?.timeKnown, true);
+  });
+
+  it("reports the day without a time when the page states only a date", () => {
+    const t = parse("the OTGE containers-not-ready fire on Mon Aug 17 was un-paged");
+
+    assert.equal(t?.timeKnown, false, "no clock time was stated");
+    assert.equal(
+      DateTime.fromJSDate(t!.at, { zone: TZ }).toISODate(),
+      "2026-08-17",
+      "the day is still known",
+    );
+  });
+
+  // The regression that started this: never invent a time the page did not state.
+  it("returns undefined rather than falling back to now", () => {
+    assert.equal(parse("no timestamp anywhere in this sentence"), undefined);
+  });
+
+  it("stays fast on input built to trigger regex backtracking", () => {
+    const started = Date.now();
+    parse(`fired at ${" ".repeat(6_000)} Aug 20`);
+    parse(`Aug 20 ${"9".repeat(8_000)}`);
+    parse("fired at Aug 20 09:17 UTC ".repeat(2_000));
+
+    assert.ok(
+      Date.now() - started < 1_000,
+      `parseEventTime took ${Date.now() - started}ms on adversarial input`,
+    );
+  });
+});
