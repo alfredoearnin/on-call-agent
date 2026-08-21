@@ -62,11 +62,27 @@ export function isAutomationKey(value: unknown): value is AutomationKey {
  * not a measurement: a real Health Check run takes several minutes. Tune it once a
  * few re-runs have been timed.
  */
-export const HEALTH_CHECK_SETTLE_MS = 20 * 60 * 1000;
+/**
+ * How long a triggered Health Check may stay "in flight" before the warning starts
+ * telling the operator to go look at the run instead of just waiting.
+ *
+ * This is NOT a settle timer any more. The warning clears on evidence — a handoff
+ * page stamped later than the trigger — because Cursor gives us no completion
+ * signal: the webhook returns no run id, there is no run-status API for
+ * automations, and no callback on finish. A fixed window silently declared the run
+ * finished whether or not anything had happened.
+ */
+export const HEALTH_CHECK_OVERDUE_MS = 20 * 60 * 1000;
 
 /**
- * The warning shown on #2's button when #1 fired recently. Returns null when
- * there is nothing to warn about.
+ * The warning shown on #2's button after #1 was fired from here.
+ *
+ * Clears only when `pageRefreshedAt` is newer than the trigger — that is the one
+ * piece of proof available locally that the Health Check actually produced a page.
+ * Note the proof only becomes visible once #2 has run and been pulled, so the
+ * warning can legitimately outlive the run itself. That is the honest shape of it:
+ * the dashboard cannot see Confluence, so it reports what it has not yet seen
+ * rather than guessing from a clock.
  *
  * #2 is never disabled by this — two deliberate clicks means the user decides.
  * Minutes are computed arithmetically rather than via luxon's toRelative() so the
@@ -74,21 +90,32 @@ export const HEALTH_CHECK_SETTLE_MS = 20 * 60 * 1000;
  */
 export function staleHealthCheckWarning(
   lastHealthCheckTriggeredAt: Date | null,
+  /** "Last refreshed" from the newest ingested page, if any. */
+  pageRefreshedAt: Date | null,
   now: Date,
-  windowMs: number = HEALTH_CHECK_SETTLE_MS,
+  overdueAfterMs: number = HEALTH_CHECK_OVERDUE_MS,
 ): string | null {
   if (!lastHealthCheckTriggeredAt) return null;
   const elapsed = now.getTime() - lastHealthCheckTriggeredAt.getTime();
-  if (elapsed < 0 || elapsed >= windowMs) return null;
+  if (elapsed < 0) return null;
+
+  // Proof the run landed: a page stamped after we asked for it.
+  if (
+    pageRefreshedAt &&
+    pageRefreshedAt.getTime() > lastHealthCheckTriggeredAt.getTime()
+  ) {
+    return null;
+  }
+
   const minutes = Math.floor(elapsed / 60_000);
   const when = minutes < 1 ? "just now" : `${minutes} min ago`;
+
+  if (elapsed >= overdueAfterMs) {
+    return `Health Check triggered ${when} and no newer page has reached the dashboard yet — check the run in Cursor.`;
+  }
   return `Health Check triggered ${when} — its Confluence page may not be updated yet.`;
 }
 
-/**
- * Guard against a double-click or an impatient reload firing a second run. Short
- * on purpose: a legitimate retry after fixing a 401 must not be blocked.
- */
 export const TRIGGER_DEBOUNCE_MS = 30_000;
 
 /**
@@ -131,6 +158,19 @@ export function shouldDebounceTrigger(
  * would publish a private endpoint to the browser and write it permanently into a
  * never-deleted audit table.
  */
+/**
+ * Says so when a trigger attempt could not be recorded.
+ *
+ * Not cosmetic. The repeat-click debounce reads the audit table, so a missing row
+ * makes it blind — and the operator is the only remaining guard against starting a
+ * second agent. Observed for real when SQLite reported the committed DB readonly
+ * mid-action, after the POST had already gone out.
+ */
+export function appendAuditNote(message: string, audited: boolean): string {
+  if (audited) return message;
+  return `${message} (Could not record this attempt, so the repeat-click guard is off — avoid clicking again until you have checked the run in Cursor.)`;
+}
+
 export function triggerFailureMessage(err: unknown, label: string): string {
   if (err instanceof HttpError) {
     if (err.status === 401 || err.status === 403) {

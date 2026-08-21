@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { HttpError } from "@/lib/clients/http";
 import {
-  HEALTH_CHECK_SETTLE_MS,
+  HEALTH_CHECK_OVERDUE_MS,
+  appendAuditNote,
   blocksRetry,
   TRIGGER_DEBOUNCE_MS,
   isAutomationKey,
@@ -24,7 +25,7 @@ const LABEL = "Growth Engineering Health Check";
 
 describe("staleHealthCheckWarning", () => {
   it("warns when the health check was triggered minutes ago", () => {
-    const warning = staleHealthCheckWarning(agoMs(3 * 60_000), NOW);
+    const warning = staleHealthCheckWarning(agoMs(3 * 60_000), null, NOW);
 
     assert.equal(
       warning,
@@ -33,45 +34,72 @@ describe("staleHealthCheckWarning", () => {
   });
 
   it("floors the elapsed time to whole minutes rather than rounding up", () => {
-    const warning = staleHealthCheckWarning(agoMs(3 * 60_000 + 59_000), NOW);
+    const warning = staleHealthCheckWarning(agoMs(3 * 60_000 + 59_000), null, NOW);
 
     assert.ok(warning?.includes("3 min ago"), warning ?? "no warning");
   });
 
   it("says just now for a trigger seconds old", () => {
-    const warning = staleHealthCheckWarning(agoMs(20_000), NOW);
+    const warning = staleHealthCheckWarning(agoMs(20_000), null, NOW);
 
     assert.ok(warning?.includes("just now"), warning ?? "no warning");
   });
 
-  it("falls silent once the settle window has passed", () => {
-    const warning = staleHealthCheckWarning(agoMs(HEALTH_CHECK_SETTLE_MS), NOW);
+  // The behaviour this replaced: a fixed window used to declare the run finished
+  // after 20 minutes whether or not anything had happened.
+  it("keeps warning past the window when no newer page has arrived", () => {
+    const warning = staleHealthCheckWarning(
+      agoMs(HEALTH_CHECK_OVERDUE_MS + 60_000),
+      null,
+      NOW,
+    );
+
+    assert.ok(warning, "the warning must not vanish on a timer");
+    assert.ok(warning?.includes("check the run in Cursor"), warning ?? "");
+  });
+
+  it("clears once a page stamped after the trigger has been ingested", () => {
+    const warning = staleHealthCheckWarning(
+      agoMs(5 * 60_000),
+      agoMs(60_000), // page refreshed after we asked
+      NOW,
+    );
 
     assert.equal(warning, null);
+  });
+
+  it("does not clear on a page older than the trigger", () => {
+    const warning = staleHealthCheckWarning(
+      agoMs(5 * 60_000),
+      agoMs(90 * 60_000), // yesterday's page, still the newest we hold
+      NOW,
+    );
+
+    assert.ok(warning, "an older page is not proof the new run landed");
   });
 
   it("falls silent when the health check has never been triggered from here", () => {
-    assert.equal(staleHealthCheckWarning(null, NOW), null);
+    assert.equal(staleHealthCheckWarning(null, null, NOW), null);
   });
 
   it("falls silent on a trigger stamped in the future", () => {
-    const warning = staleHealthCheckWarning(agoMs(-60_000), NOW);
-
-    assert.equal(warning, null);
+    assert.equal(staleHealthCheckWarning(agoMs(-60_000), null, NOW), null);
   });
 });
 
-describe("shouldDebounceTrigger", () => {
-  it("debounces a second click inside the window", () => {
-    assert.equal(shouldDebounceTrigger(agoMs(5_000), NOW), true);
+describe("appendAuditNote", () => {
+  it("leaves the message alone when the attempt was recorded", () => {
+    assert.equal(appendAuditNote("Triggered.", true), "Triggered.");
   });
 
-  it("allows a retrigger once the window has passed", () => {
-    assert.equal(shouldDebounceTrigger(agoMs(TRIGGER_DEBOUNCE_MS), NOW), false);
-  });
+  // The debounce reads the audit table, so a missing row means the operator is the
+  // only thing standing between a stuck click and a second concurrent agent.
+  it("warns that the repeat-click guard is off when the attempt was not recorded", () => {
+    const msg = appendAuditNote("Triggered.", false);
 
-  it("allows the first ever trigger", () => {
-    assert.equal(shouldDebounceTrigger(null, NOW), false);
+    assert.ok(msg.startsWith("Triggered."), msg);
+    assert.ok(msg.includes("repeat-click guard is off"), msg);
+    assert.ok(msg.includes("checked the run in Cursor"), msg);
   });
 });
 
