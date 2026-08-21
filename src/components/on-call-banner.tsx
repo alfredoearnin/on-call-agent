@@ -271,10 +271,10 @@ function CoverageStrip({
 
   if (summary.kind === CoverageSummaryKind.SomeOut && absent.length > 0) {
     return (
-      <div className="border-b border-border bg-warn/10 px-4 py-2 text-xs text-warn">
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
-          <div className="space-y-0.5">
+      <div className="border-b border-border bg-warn/10 px-4 py-3 text-sm text-warn">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="space-y-1">
             {absent.map((role) => (
               <p key={role}>
                 <span className="font-semibold">
@@ -311,17 +311,39 @@ function CoverageStrip({
     );
   }
 
-  // CheckFailed and NotChecked both mean "we do not know", and are kept visually
-  // quiet rather than alarming — but they are never silent, because silence would
-  // read as an all-clear.
+  // A check that ran and failed is an operational unknown: nobody knows whether the
+  // rotation is covered right now. It used to render muted and unbacked — the
+  // quietest of the four states — which made the most actionable "we don't know"
+  // the easiest to miss. It now carries warn tone and body-size text, matching how
+  // `healthTone` already maps unknown → warn elsewhere for the same reason.
+  if (summary.kind === CoverageSummaryKind.CheckFailed) {
+    return (
+      <div className="border-b border-border bg-warn/10 px-4 py-3 text-sm text-warn">
+        <div className="flex items-start gap-2.5">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            <span className="font-semibold">Availability not verified.</span>{" "}
+            {summary.reason
+              ? `The coverage check could not complete (${summary.reason}).`
+              : "The coverage check could not complete."}{" "}
+            Confirm manually who is covering before relying on this rotation.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // NotChecked is a different thing: the page carries no check at all, which is a
+  // setup state rather than an operational unknown. Kept quiet on purpose so it does
+  // not compete with the states above — but never silent, because silence would read
+  // as an all-clear.
   return (
     <div className="border-b border-border px-4 py-2 text-xs text-muted-foreground">
       <div className="flex items-start gap-2">
         <HelpCircle className="mt-px h-3.5 w-3.5 shrink-0" />
         <p>
-          {summary.kind === CoverageSummaryKind.CheckFailed
-            ? `Availability could not be checked${summary.reason ? ` (${summary.reason})` : ""} — verify manually before relying on this rotation.`
-            : "The handoff page carried no availability check, so nobody's time off was verified. This is not an all-clear."}
+          The handoff page carried no availability check, so nobody&apos;s time
+          off was verified. This is not an all-clear.
         </p>
       </div>
     </div>
