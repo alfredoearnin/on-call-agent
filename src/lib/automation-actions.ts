@@ -96,7 +96,17 @@ export async function triggerAutomationAction(
       orderBy: { triggeredAt: "desc" },
       select: { id: true, triggeredAt: true },
     });
-    warning = staleHealthCheckWarning(lastHealthCheck?.triggeredAt ?? null, now);
+    // The page stamp is the only local proof that #1's run actually produced a
+    // page, so the warning clears on that rather than on a timer.
+    const latestRun = await prisma.ingestionRun.findFirst({
+      orderBy: { startedAt: "desc" },
+      select: { handoffRefreshedAt: true },
+    });
+    warning = staleHealthCheckWarning(
+      lastHealthCheck?.triggeredAt ?? null,
+      latestRun?.handoffRefreshedAt ?? null,
+      now,
+    );
     if (warning) precededById = lastHealthCheck?.id ?? null;
   }
 

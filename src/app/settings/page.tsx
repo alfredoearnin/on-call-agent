@@ -61,7 +61,11 @@ export default async function SettingsPage() {
           lastTriggeredAt: lastTriggers[meta.key]?.triggeredAt ?? null,
           warning:
             meta.key === AutomationKey.DashboardRefresh
-              ? staleHealthCheckWarning(lastHealthCheck, now)
+              ? staleHealthCheckWarning(
+                  lastHealthCheck,
+                  latest?.handoffRefreshedAt ?? null,
+                  now,
+                )
               : null,
         };
       })
