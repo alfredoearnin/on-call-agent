@@ -158,6 +158,19 @@ export function shouldDebounceTrigger(
  * would publish a private endpoint to the browser and write it permanently into a
  * never-deleted audit table.
  */
+/**
+ * Says so when a trigger attempt could not be recorded.
+ *
+ * Not cosmetic. The repeat-click debounce reads the audit table, so a missing row
+ * makes it blind — and the operator is the only remaining guard against starting a
+ * second agent. Observed for real when SQLite reported the committed DB readonly
+ * mid-action, after the POST had already gone out.
+ */
+export function appendAuditNote(message: string, audited: boolean): string {
+  if (audited) return message;
+  return `${message} (Could not record this attempt, so the repeat-click guard is off — avoid clicking again until you have checked the run in Cursor.)`;
+}
+
 export function triggerFailureMessage(err: unknown, label: string): string {
   if (err instanceof HttpError) {
     if (err.status === 401 || err.status === 403) {

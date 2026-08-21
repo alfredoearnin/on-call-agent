@@ -11,6 +11,7 @@ import {
   isAutomationKey,
   shouldDebounceTrigger,
   staleHealthCheckWarning,
+  appendAuditNote,
 } from "@/lib/automations/meta";
 import { canTriggerAutomation, automationEnvNames } from "@/lib/automations/secrets";
 
@@ -35,6 +36,21 @@ export interface TriggerResult {
 export async function triggerAutomationAction(
   rawKey: string,
 ): Promise<TriggerResult> {
+  // The docstring promises this never throws, so make that true rather than nearly
+  // true. Every DB read below can fail — and a thrown server action shows the
+  // operator a raw 500 with no indication of whether the agent started.
+  try {
+    return await sendTrigger(rawKey);
+  } catch {
+    return {
+      ok: false,
+      message:
+        "The trigger could not be completed. Check the automation in Cursor before retrying — it may or may not have started.",
+    };
+  }
+}
+
+async function sendTrigger(rawKey: string): Promise<TriggerResult> {
   // A server action is a public endpoint, so the argument is untrusted — same
   // reason applyRecommendationAction takes `scope: string` and normalizes it.
   if (!isAutomationKey(rawKey)) {
@@ -115,18 +131,30 @@ export async function triggerAutomationAction(
     meta.label,
   );
 
-  await prisma.automationTrigger.create({
-    data: {
-      automationKey: key,
-      status: outcome.ok ? TriggerStatus.Triggered : TriggerStatus.Failed,
-      httpStatus: outcome.status ?? null,
-      // Already sanitized by triggerFailureMessage — carries no URL, key, or body.
-      error: outcome.ok ? null : outcome.message,
-      operator: cfg.apply.operator,
-      staleWarning: Boolean(warning),
-      precededById,
-    },
-  });
+  // The POST has already happened, so an audit failure must not destroy the result:
+  // throwing here would show the operator a raw 500 while the agent was already
+  // running, leaving them unable to tell whether it fired. Worse, the 30-second
+  // debounce reads this table, so a missing row makes it blind and a retry could
+  // start a second agent — the exact double-fire `retries: 0` exists to prevent.
+  // Observed for real: a `git stash` of prisma/oncall.db under a live connection
+  // made SQLite report "attempt to write a readonly database" right here.
+  let audited = true;
+  try {
+    await prisma.automationTrigger.create({
+      data: {
+        automationKey: key,
+        status: outcome.ok ? TriggerStatus.Triggered : TriggerStatus.Failed,
+        httpStatus: outcome.status ?? null,
+        // Already sanitized by triggerFailureMessage — no URL, key, or body.
+        error: outcome.ok ? null : outcome.message,
+        operator: cfg.apply.operator,
+        staleWarning: Boolean(warning),
+        precededById,
+      },
+    });
+  } catch {
+    audited = false;
+  }
 
   // Only the panel and the header change now. The trigger's real effects arrive
   // minutes later via Confluence → PR → git pull, so no data page has new
@@ -134,7 +162,9 @@ export async function triggerAutomationAction(
   revalidatePath("/settings");
   revalidatePath("/", "layout");
 
-  if (!outcome.ok) return { ok: false, message: outcome.message };
+  if (!outcome.ok) {
+    return { ok: false, message: appendAuditNote(outcome.message, audited) };
+  }
 
   const nextStep =
     key === AutomationKey.HealthCheck
@@ -143,8 +173,9 @@ export async function triggerAutomationAction(
 
   return {
     ok: true,
-    message: [`${meta.label} triggered.`, nextStep, warning]
-      .filter(Boolean)
-      .join(" "),
+    message: appendAuditNote(
+      [`${meta.label} triggered.`, nextStep, warning].filter(Boolean).join(" "),
+      audited,
+    ),
   };
 }

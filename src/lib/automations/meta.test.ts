@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { HttpError } from "@/lib/clients/http";
 import {
   HEALTH_CHECK_OVERDUE_MS,
+  appendAuditNote,
   blocksRetry,
   TRIGGER_DEBOUNCE_MS,
   isAutomationKey,
@@ -83,6 +84,22 @@ describe("staleHealthCheckWarning", () => {
 
   it("falls silent on a trigger stamped in the future", () => {
     assert.equal(staleHealthCheckWarning(agoMs(-60_000), null, NOW), null);
+  });
+});
+
+describe("appendAuditNote", () => {
+  it("leaves the message alone when the attempt was recorded", () => {
+    assert.equal(appendAuditNote("Triggered.", true), "Triggered.");
+  });
+
+  // The debounce reads the audit table, so a missing row means the operator is the
+  // only thing standing between a stuck click and a second concurrent agent.
+  it("warns that the repeat-click guard is off when the attempt was not recorded", () => {
+    const msg = appendAuditNote("Triggered.", false);
+
+    assert.ok(msg.startsWith("Triggered."), msg);
+    assert.ok(msg.includes("repeat-click guard is off"), msg);
+    assert.ok(msg.includes("checked the run in Cursor"), msg);
   });
 });
 
