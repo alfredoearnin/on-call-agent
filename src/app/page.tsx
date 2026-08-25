@@ -2,6 +2,10 @@ import Link from "next/link";
 import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
+  GROWTH_TEAM_SERVICES,
+  summarizeOwnership,
+} from "@/lib/team-services";
+import {
   getLatestRun,
   getTrendSeries,
   getLatestVuln,
@@ -54,6 +58,7 @@ export default async function OverviewPage() {
     ["strongly-recommend", "recommend", "regressed", "proposed"].includes(r.status),
   );
   const topRecs = recs.slice(0, 3);
+  const serviceSummary = summarizeOwnership(GROWTH_TEAM_SERVICES);
 
   return (
     <div className="space-y-6">
@@ -174,6 +179,25 @@ export default async function OverviewPage() {
         </Card>
 
         <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Team services</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <div className="text-2xl font-semibold">{serviceSummary.total}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {serviceSummary.confirmed} confirmed · {serviceSummary.review} need
+                review
+              </div>
+              <Link
+                href="/services"
+                className="mt-3 inline-block text-primary hover:underline"
+              >
+                View full catalog →
+              </Link>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>SLOs / SLAs</CardTitle>
