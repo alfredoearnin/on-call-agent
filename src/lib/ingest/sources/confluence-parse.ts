@@ -11,6 +11,7 @@ import {
   Confidence,
   RecommendationStatus,
   SourceStatus,
+  PageState,
 } from "@/lib/constants";
 import type {
   IngestBundle,
@@ -241,8 +242,20 @@ function parseTable(body: string): string[][] {
 
 // ── Week window (Tue -> Tue) ────────────────────────────────────────────────
 
+/**
+ * Every quantifier is bounded, for the same reason as the rotation and refresh
+ * regexes — but here it is load-bearing beyond the ingest. Three unbounded lazy
+ * `[^\n]*?` runs in sequence re-split against each other whenever the tail fails,
+ * which is O(n²): a 440 KB line took 6.6 s to reject. parseWindow now also runs on
+ * every archived page during a Settings render (readPageArchive), and both the read
+ * and the match block the event loop, so one oversized page would stall every
+ * concurrent request — not just the page that asked.
+ *
+ * The bounds are generous against real pages: the widest real gap is the frozen
+ * banner's "on-call week has ended; see the next week's page (" at 37 characters.
+ */
 const WINDOW =
-  /on-call week[^\n]*?(\d{4}-\d{2}-\d{2})[^\n]*?(?:→|->)[^\n]*?(\d{4}-\d{2}-\d{2})/i;
+  /on-call week[^\n]{0,120}?(\d{4}-\d{2}-\d{2})[^\n]{0,40}?(?:→|->)[^\n]{0,40}?(\d{4}-\d{2}-\d{2})/i;
 
 /**
  * The state banner sits above the header and cites the *next* week's page ("a
@@ -269,6 +282,50 @@ export function parseWindow(
   const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
   if (!start.isValid || !end.isValid) return undefined;
   return { start: start.toJSDate(), end: end.toJSDate() };
+}
+
+// ── Page state banner (live vs frozen) ──────────────────────────────────────
+
+/**
+ * The state banner the agent writes above the header (its Step 7, item 0):
+ *
+ *   🔄 **Live page** — refreshed daily during the on-call week (X → Y). …
+ *   🔒 **Frozen — final state at week close (Y).** This on-call week has ended; …
+ *
+ * Read to answer exactly one question: did the Tuesday handoff close the week it
+ * ended? A page still calling itself live after its own window has passed is the
+ * evidence that the handoff's Phase A never ran.
+ *
+ * Confined to the lines ABOVE the `#` title, because both wordings recur in the
+ * body with the opposite sense — a live page promises it "freezes at the Tuesday
+ * handoff", a frozen one points to "the next week's page", and the footer says
+ * "live, refreshed daily". Scanning the whole document matches both on both.
+ */
+const BANNER_FROZEN = /\bfrozen\b/i;
+/** `Live page` as a phrase — the footer's bare "live," is not a state banner. */
+const BANNER_LIVE = /\blive\s{1,4}page\b/i;
+/** The banner is the first line or two; a cap keeps a title-less page bounded. */
+const BANNER_MAX_LINES = 4;
+
+function bannerLines(md: string): string[] {
+  const out: string[] = [];
+  for (const line of md.split("\n")) {
+    if (/^#\s/.test(line)) break; // the title ends the banner region
+    if (!line.trim()) continue;
+    out.push(line);
+    if (out.length === BANNER_MAX_LINES) break;
+  }
+  return out;
+}
+
+export function parsePageState(md: string): PageState | undefined {
+  for (const line of bannerLines(md)) {
+    // Frozen wins within a line: the current frozen banner never says "Live
+    // page", but a future wording carrying both should read as closed, not open.
+    if (BANNER_FROZEN.test(line)) return PageState.Frozen;
+    if (BANNER_LIVE.test(line)) return PageState.Live;
+  }
+  return undefined;
 }
 
 // ── Page refresh stamp ──────────────────────────────────────────────────────
@@ -863,6 +920,7 @@ export function parseConfluence(
   const schedule = parseOnCall(handoffMd);
   const kpis = parseKpis(handoffMd);
   const pageRefresh = parseRefreshedAt(handoffMd, tz);
+  const pageState = parsePageState(handoffMd);
   const coverage = parseCoverage(handoffMd, tz);
   const recommendations = parseRecommendations(handoffMd);
   const alerts = [
@@ -883,6 +941,7 @@ export function parseConfluence(
     kpis: kpis ?? undefined,
     window,
     pageRefresh,
+    pageState,
     coverage,
     sourceStatus: {
       datadog: SourceStatus.Skipped,

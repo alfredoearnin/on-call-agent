@@ -1,5 +1,12 @@
 # Growth Team Ops Review — Weekly Handoff Agent (Confluence edition)
 
+> **Version:** 2026-08-25 (verify the week close). Changes vs prior: **Phase A** must now be
+> verified before Phase B starts — re-read the closing week's page and confirm the banner
+> reads frozen AND the stamp is the handoff date. If it cannot be closed, Phase B still runs
+> but the run is FAILED. Prompted by the Aug 18 → Aug 25 week, which froze reading
+> "Last refreshed Aug 23" — its totals 40 hours short of the week it reports — while
+> the run reported success.
+>
 > **Version:** 2026-08-20 (retry on failure). Changes vs prior: added a **Retry policy**
 > that splits reads from writes — reads still degrade gracefully, but every write
 > (weekly page, ledger, Slack) now retries 4 times with backoff, re-searching before
@@ -195,6 +202,26 @@ Vulnerabilities: `searchJiraIssuesUsingJql`.
        **final** `updateConfluencePage` on its page: set the banner to **frozen** and use
        `versionMessage: "Final refresh — week closed <end-date>"`. For Phase A comparisons,
        "prior" = the week before the closing week (`[start − 14d, start − 7d]`).
+
+       **Phase A is not optional, and it is the phase that silently gets skipped.**
+       It is the only run that ever sees the closing week as a complete 7 days, so if
+       it does not happen that week's page freezes mid-week and every number on it is
+       permanently short. It has failed for real: the week of Aug 18 → Aug 25 froze
+       still reading "Last refreshed Aug 23", so its totals cover 5.3 days of a
+       7-day week — 18 alert records, with the last 40 hours never counted. Phase B
+       opened the new week and the run reported success. From the outside nothing
+       looked wrong, because the dashboard showed a fresh page for the current week.
+
+       So **verify Phase A before starting Phase B.** Re-read the closing week's page
+       with `getConfluencePage` and confirm BOTH:
+       - the banner now reads **frozen** (`🔒`), not `🔄 Live page`; and
+       - its refresh stamp is **today** (the handoff date), not an earlier day.
+
+       If either is wrong, the final refresh did not take: retry per the Retry policy.
+       If it still fails, **run Phase B anyway** — the new week must open or you lose
+       that week too — but the run is then FAILED, not degraded. Report it per
+       "Reporting a failed run", naming the closing week and the stale stamp it kept,
+       because nothing downstream will notice on its own.
     2. **Phase B — Open the new week.** Find-or-create the `current_window` page (today → next
        Tuesday) with the banner set to **live**. For Phase B comparisons, "prior" = the closing
        week (`prior_window`).

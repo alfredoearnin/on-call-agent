@@ -115,6 +115,20 @@ export const SourceStatus = {
 } as const;
 export type SourceStatus = (typeof SourceStatus)[keyof typeof SourceStatus];
 
+/**
+ * The handoff page's own state banner (the agent prompt, Step 7 item 0): a page is
+ * rewritten daily while its week runs, then frozen by the Tuesday handoff run.
+ *
+ * Deliberately a third-state enum rather than `frozen?: boolean`, because absence
+ * means "the page carried no banner" — not "it is live". Only a page that says
+ * `Live page` after its week has ended is evidence the handoff never closed it.
+ */
+export const PageState = {
+  Live: "live",
+  Frozen: "frozen",
+} as const;
+export type PageState = (typeof PageState)[keyof typeof PageState];
+
 /** Which scope/branch of a single monitor an apply targets. */
 export const TargetScope = {
   Prod: "prod",
@@ -156,6 +170,34 @@ export const AutomationHealthState = {
 } as const;
 export type AutomationHealthState =
   (typeof AutomationHealthState)[keyof typeof AutomationHealthState];
+
+/**
+ * Whether the Tuesday handoff actually closed the week it ended.
+ *
+ * Separate from AutomationHealthState because it answers a different question on a
+ * different clock: that one asks "did today's run land?", this one asks "was the
+ * week that just ended given its final refresh?". A run can be perfectly healthy
+ * every single day and still leave a closed week truncated — which is exactly what
+ * happened to Aug 18 → Aug 25.
+ *
+ * Stale and Unfrozen are deliberately distinct. Stale means the archived numbers
+ * are WRONG (the page stopped being refreshed before its week ended, so it
+ * undercounts). Unfrozen means the numbers are complete but the banner still
+ * claims the page is live — misleading to a reader, harmless to the data.
+ */
+export const WeekCloseState = {
+  /** Final refresh landed at or after the week's end, and the page is frozen. */
+  Closed: "closed",
+  /** The page's last refresh predates its own window end — it undercounts. */
+  Stale: "stale",
+  /** Refreshed through the end, but never flipped out of "Live page". */
+  Unfrozen: "unfrozen",
+  /** The week has not ended yet — nothing is owed. */
+  Pending: "pending",
+  /** No archived week, no banner, or no stamp: absence proves nothing. */
+  Unknown: "unknown",
+} as const;
+export type WeekCloseState = (typeof WeekCloseState)[keyof typeof WeekCloseState];
 
 /** Outcome of a dashboard-initiated automation webhook trigger. */
 export const TriggerStatus = {

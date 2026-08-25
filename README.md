@@ -397,6 +397,15 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   warning then) or when `git log origin/main` failed.
 - **An automation reads `failed` every morning** — the grace window is too short for
   how long the run actually takes. Raise `AUTOMATION_GRACE_MINUTES`.
+- **Week close reads `stale`** — the Tuesday handoff never gave the week that ended its
+  final refresh, so its archived page stops mid-week and every total on it is short by
+  the days it never saw. This is invisible to the two states above, which only ask
+  whether a run happened *today*: a week can be published every single day and still be
+  archived truncated by the one run that was supposed to close it. Re-run the Health
+  Check to rewrite the closing week's page, and check that the Phase A verification in
+  the [prompt](./agents/) is actually pasted into the automation — this is the failure
+  that prompted it. `unfrozen` is the milder version: the numbers are complete but the
+  banner still says `Live page`, so the archive presents a finished week as in progress.
 - **Re-run button disabled** — that automation has no webhook URL + API key in
   `.env.local`. Add a **Webhook trigger** to it in Cursor and save first.
 - **Re-run returns a 401** — the key is being sent in the wrong header. Try

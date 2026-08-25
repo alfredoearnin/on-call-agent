@@ -7,16 +7,24 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { AutomationHealthState, AutomationKey } from "@/lib/constants";
+import {
+  AutomationHealthState,
+  AutomationKey,
+  PageState,
+  WeekCloseState,
+} from "@/lib/constants";
 import {
   assessAutomations,
+  assessWeekClose,
   healthTone,
+  weekCloseTone,
   worstState,
   type AutomationHealth,
   type AutomationSchedule,
   type PageEvidence,
 } from "@/lib/automations/health";
 import type { GitEvidence } from "@/lib/automations/git-evidence";
+import type { ArchivedWeek } from "@/lib/automations/page-evidence";
 
 // The 9AM slot is expressed in America/Chicago, so in August it resolves in CDT
 // (UTC-5), not CST: 09:00 → 14:00Z, and +3h grace ⇒ today's deadline is 17:00Z.
@@ -315,7 +323,184 @@ describe("healthTone", () => {
   });
 });
 
+// The week-close check runs on the page windows, which the pages state in PT.
+const PT = "America/Los_Angeles";
+const WEEK = {
+  start: new Date("2026-08-18T07:00:00Z"), // Aug 18 00:00 PT
+  end: new Date("2026-08-25T07:00:00Z"), // Aug 25 00:00 PT
+};
+const AFTER_CLOSE = new Date("2026-08-25T20:00:00Z"); // Aug 25 13:00 PT
+
+describe("assessWeekClose", () => {
+  // The Aug 18 -> Aug 25 regression: the run that should have closed this week
+  // published a page for the NEW week and reported success, leaving this one
+  // frozen 40 h early — its totals cover 5.3 days of a 7-day week. Every daily
+  // check passed while it happened, which is why this check has to exist.
+  it("reports a week stale when its page stopped being refreshed before its own end", () => {
+    const v = closeOf([
+      week({
+        state: PageState.Live,
+        refreshedAt: new Date("2026-08-23T15:05:00Z"),
+        refreshedText: "2026-08-23 8:05 AM PT (America/Los_Angeles)",
+      }),
+    ]);
+
+    assert.equal(v.state, WeekCloseState.Stale);
+    assert.equal(v.shortBy, "40 h");
+    // The verdict must quote the page, not paraphrase it.
+    assert.ok(v.evidence.includes("2026-08-23 8:05 AM PT"), v.evidence);
+    assert.ok(v.evidence.includes("Aug 18 → Aug 25"), v.evidence);
+  });
+
+  it("reports a week closed when the final refresh landed at its end and the page is frozen", () => {
+    const v = closeOf([week()]);
+
+    assert.equal(v.state, WeekCloseState.Closed);
+    assert.equal(v.unclosed, 0);
+    assert.equal(v.judged, 1);
+  });
+
+  // Data is complete, so this is not an alert — but the archive still presents a
+  // finished week as in progress, which is how a reader ends up quoting it as live.
+  it("reports a week unfrozen when it was refreshed through its end but still says Live page", () => {
+    const v = closeOf([week({ state: PageState.Live })]);
+
+    assert.equal(v.state, WeekCloseState.Unfrozen);
+    assert.equal(v.unclosed, 1);
+    assert.ok(v.evidence.includes("Live page"), v.evidence);
+  });
+
+  it("reports pending while the week is still running", () => {
+    const v = closeOf([week()], new Date("2026-08-21T20:00:00Z"));
+
+    assert.equal(v.state, WeekCloseState.Pending);
+    assert.equal(v.judged, 0);
+  });
+
+  it("cannot judge a page that carries no refresh stamp", () => {
+    const v = closeOf([
+      week({ refreshedAt: undefined, refreshedText: undefined }),
+    ]);
+
+    assert.equal(v.state, WeekCloseState.Unknown);
+    assert.equal(v.judged, 0, "a stampless page must not count either way");
+  });
+
+  // A banner-less page must not be credited as closed just because it does not say
+  // "Live page". Testing `state !== Live` would have made the count disagree with
+  // the headline about the very same page, and a fleet of banner-less pages would
+  // then read as a clean archive.
+  it("cannot judge a page refreshed through its end that carries no banner", () => {
+    const v = closeOf([week({ state: undefined })]);
+
+    assert.equal(v.state, WeekCloseState.Unknown);
+    assert.ok(v.evidence.includes("no state banner"), v.evidence);
+    assert.equal(v.judged, 0, "no banner means no verdict, not a clean one");
+    assert.equal(v.unclosed, 0);
+  });
+
+  // The week ends at 00:00 on handoff day, but the run that closes it does not
+  // start until that morning's slot. Judging from the window end alone lit up the
+  // loudest state in the vocabulary every Tuesday morning, for a close not yet owed.
+  it("stays pending until the handoff run is actually overdue", () => {
+    const truncated = week({
+      state: PageState.Live,
+      refreshedAt: new Date("2026-08-23T15:05:00Z"),
+      refreshedText: "2026-08-23 8:05 AM PT (America/Los_Angeles)",
+    });
+
+    // Aug 25, 00:30 PT — the week has ended, the 9:00 CST run has not happened.
+    assert.equal(
+      closeOf([truncated], new Date("2026-08-25T07:30:00Z")).state,
+      WeekCloseState.Pending,
+    );
+    // Aug 25, 12:30 CDT — past the slot plus its 180-minute grace.
+    assert.equal(
+      closeOf([truncated], new Date("2026-08-25T17:30:00Z")).state,
+      WeekCloseState.Stale,
+    );
+  });
+
+  // One miss is a bad run; four out of five is the reason this shipped.
+  it("judges the newest closed week and counts the rest it can read", () => {
+    const v = closeOf([
+      week({
+        file: "handoff-2026-08-04.md",
+        window: {
+          start: new Date("2026-08-04T07:00:00Z"),
+          end: new Date("2026-08-11T07:00:00Z"),
+        },
+        refreshedAt: undefined,
+        refreshedText: undefined,
+      }),
+      week({
+        file: "handoff-2026-08-11.md",
+        window: {
+          start: new Date("2026-08-11T07:00:00Z"),
+          end: new Date("2026-08-18T07:00:00Z"),
+        },
+        refreshedAt: new Date("2026-08-18T19:35:00Z"),
+      }),
+      week({
+        state: PageState.Live,
+        refreshedAt: new Date("2026-08-23T15:05:00Z"),
+        refreshedText: "2026-08-23 8:05 AM PT (America/Los_Angeles)",
+      }),
+    ]);
+
+    assert.equal(v.state, WeekCloseState.Stale, "the newest closed week wins");
+    assert.equal(v.judged, 2, "the stampless week is not judgeable");
+    assert.equal(v.unclosed, 1);
+  });
+
+  it("reports unknown when the archive could not be read", () => {
+    const v = assessWeekClose(
+      { weeks: [], error: "data/confluence could not be read (ENOENT)" },
+      AFTER_CLOSE,
+      PT,
+      SCHEDULE,
+    );
+
+    assert.equal(v.state, WeekCloseState.Unknown);
+    assert.ok(v.evidence.includes("ENOENT"), v.evidence);
+    // The reader hands us an errno, never Node's message — that embeds the
+    // absolute deployment path, and this sentence is rendered in the UI.
+    assert.ok(!/\//.test(v.evidence.replace("data/confluence", "")), v.evidence);
+  });
+
+  it("reports unknown when there are no archived pages at all", () => {
+    const v = closeOf([]);
+
+    assert.equal(v.state, WeekCloseState.Unknown);
+  });
+});
+
+describe("weekCloseTone", () => {
+  it("alerts only on stale, the one state where the archived numbers are wrong", () => {
+    assert.equal(weekCloseTone(WeekCloseState.Stale), "alert");
+    assert.equal(weekCloseTone(WeekCloseState.Unfrozen), "warn");
+  });
+
+  it("maps the remaining states to their semantic tones", () => {
+    assert.equal(weekCloseTone(WeekCloseState.Closed), "ok");
+    assert.equal(weekCloseTone(WeekCloseState.Pending), "neutral");
+    assert.equal(weekCloseTone(WeekCloseState.Unknown), "warn");
+  });
+});
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+const week = (over: Partial<ArchivedWeek> = {}): ArchivedWeek => ({
+  file: "handoff-2026-08-18.md",
+  window: WEEK,
+  state: PageState.Frozen,
+  refreshedAt: new Date("2026-08-25T19:35:00Z"), // Aug 25 12:35 PT, after close
+  refreshedText: "2026-08-25 12:35 PM PT (America/Los_Angeles)",
+  ...over,
+});
+
+const closeOf = (weeks: ArchivedWeek[], now: Date = AFTER_CLOSE) =>
+  assessWeekClose({ weeks }, now, PT, SCHEDULE);
 
 function assess(over: {
   now?: Date;

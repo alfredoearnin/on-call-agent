@@ -4,6 +4,7 @@ import {
   getLastAutomationTriggers,
   getRuns,
   getSourceSummary,
+  getWeekClose,
 } from "@/lib/queries";
 import { AUTOMATIONS, staleHealthCheckWarning } from "@/lib/automations/meta";
 import {
@@ -33,12 +34,13 @@ function runTone(status: string): "ok" | "warn" | "alert" | "neutral" {
 export default async function SettingsPage() {
   const cfg = getConfig();
   const now = new Date();
-  const [{ weeksIngested, latest }, runs, health, lastTriggers] =
+  const [{ weeksIngested, latest }, runs, health, lastTriggers, weekClose] =
     await Promise.all([
       getSourceSummary(),
       getRuns(15),
       getAutomationHealth(now),
       getLastAutomationTriggers(),
+      getWeekClose(now),
     ]);
   const tz = cfg.team.timezone;
 
@@ -153,7 +155,7 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
-      <AutomationPanel rows={automationRows} />
+      <AutomationPanel rows={automationRows} weekClose={weekClose} />
 
       <Card>
         <CardHeader>

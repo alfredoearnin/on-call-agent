@@ -17,10 +17,13 @@ import { DateTime } from "luxon";
 import {
   AutomationHealthState,
   AutomationKey,
+  PageState,
+  WeekCloseState,
   type AutomationHealthState as HealthState,
 } from "@/lib/constants";
 import { AUTOMATIONS, automationMeta } from "@/lib/automations/meta";
 import type { GitCommit, GitEvidence } from "@/lib/automations/git-evidence";
+import type { ArchivedWeek, PageArchive } from "@/lib/automations/page-evidence";
 
 /**
  * agents/OnCall dashboard.md step 6b commits `Daily refresh $(date +%Y-%m-%d)`; the squash
@@ -375,5 +378,202 @@ export function healthTone(
   if (state === AutomationHealthState.Healthy) return "ok";
   if (state === AutomationHealthState.Failed) return "alert";
   if (state === AutomationHealthState.Pending) return "neutral";
+  return "warn";
+}
+
+// ── Week close ──────────────────────────────────────────────────────────────
+
+/**
+ * Did the Tuesday handoff actually close the week that ended?
+ *
+ * This is the blind spot assessAutomations cannot see. That function asks whether
+ * a run happened today, and by that measure the week of Aug 18 → Aug 25 looked
+ * perfect: a page was published every day. But the run that ended it never gave
+ * the closing week its final refresh, so the archived page froze reading
+ * "Last refreshed Aug 23" and permanently undercounts its own week. Nothing in
+ * the daily view could notice, because the daily view was fine.
+ *
+ * The damage is silent and cumulative: every stale archived page understates its
+ * week forever, and any trend drawn across those weeks is wrong by whatever the
+ * missing days held. So this reports both the newest closed week and how many of
+ * the readable closed weeks share the problem — one is a miss, five is a design flaw.
+ */
+export interface WeekCloseHealth {
+  state: WeekCloseState;
+  /**
+   * One sentence stating what the archive shows, rendered VERBATIM. Same contract
+   * as AutomationHealth.evidence: it quotes the page and never guesses at a cause.
+   */
+  evidence: string;
+  /** The closed week this verdict is about, when one could be identified. */
+  window?: { start: Date; end: Date };
+  refreshedAt?: Date;
+  refreshedText?: string;
+  /** How long before its own window end that page stopped being refreshed. */
+  shortBy?: string;
+  /** Closed weeks left unclosed, out of those whose pages can be judged at all. */
+  unclosed: number;
+  judged: number;
+}
+
+/**
+ * A page is properly closed when it was refreshed through its end AND says frozen.
+ *
+ * Positive evidence on both counts, deliberately: `state !== Live` would let a page
+ * with no banner at all count as closed, which is the same absence-means-fine lie
+ * the rest of this module exists to avoid — and it would disagree with the headline
+ * verdict, which reads that page as Unknown.
+ */
+function isClosed(w: ArchivedWeek): boolean {
+  if (!w.window || !w.refreshedAt) return false;
+  return (
+    w.refreshedAt.getTime() >= w.window.end.getTime() &&
+    w.state === PageState.Frozen
+  );
+}
+
+const fmtWindow = (w: { start: Date; end: Date }, zone: string) =>
+  `${DateTime.fromJSDate(w.start, { zone }).toFormat("LLL d")} → ${DateTime.fromJSDate(w.end, { zone }).toFormat("LLL d")}`;
+
+/** Hours below two days, days above — the scale a reader actually thinks in. */
+function humanGap(ms: number): string {
+  const hours = ms / 3_600_000;
+  if (hours < 48) return `${hours.toFixed(hours < 10 ? 1 : 0)} h`;
+  return `${(hours / 24).toFixed(1)} days`;
+}
+
+/**
+ * When the close of a week ending at `end` becomes late.
+ *
+ * A week ends at 00:00 local on the handoff day, but the run that closes it does
+ * not start until that morning's slot. Judging from the window end alone would
+ * paint every Tuesday morning red for a close that is not yet owed — and a weekly
+ * false alarm on the loudest state in the vocabulary is how alerting gets ignored.
+ *
+ * The handoff day is the calendar day the window ends in the PAGE's zone; the slot
+ * is that day's slot in the SCHEDULE's zone. They genuinely differ (windows are
+ * stated in PT, the automations are scheduled in CST), and going through the
+ * calendar date rather than arithmetic on the instant keeps that unambiguous.
+ */
+function closeDueAt(
+  end: Date,
+  zone: string,
+  schedule: AutomationSchedule,
+): number {
+  const handoffDay = DateTime.fromJSDate(end, { zone }).toISODate();
+  return DateTime.fromISO(handoffDay ?? "", { zone: schedule.timezone })
+    .set({ hour: schedule.hour, minute: schedule.minute })
+    .plus({ minutes: schedule.graceMinutes })
+    .toMillis();
+}
+
+export function assessWeekClose(
+  archive: PageArchive,
+  now: Date,
+  /** Zone the pages state their windows in, and the zone verdicts are worded in. */
+  zone: string,
+  /** The handoff run's slot, so a week is never "late" before its close is due. */
+  schedule: AutomationSchedule,
+): WeekCloseHealth {
+  const none = { unclosed: 0, judged: 0 };
+
+  if (archive.error) {
+    return {
+      ...none,
+      state: WeekCloseState.Unknown,
+      evidence: `The handoff archive could not be read (${archive.error}), so no week close can be checked.`,
+    };
+  }
+  if (archive.weeks.length === 0) {
+    return {
+      ...none,
+      state: WeekCloseState.Unknown,
+      evidence:
+        "No archived handoff pages were found, so no week close can be checked.",
+    };
+  }
+
+  // A week is owed a close once the run that should have closed it is overdue.
+  const closed = archive.weeks.filter(
+    (w) => w.window && closeDueAt(w.window.end, zone, schedule) <= now.getTime(),
+  );
+  if (closed.length === 0) {
+    return {
+      ...none,
+      state: WeekCloseState.Pending,
+      evidence:
+        "No week on file has passed its handoff deadline yet, so no close is owed.",
+    };
+  }
+
+  // A page can only be judged if it carries a window, a stamp AND a banner. The
+  // earliest pages predate both the stamp and the banner; counting them either way
+  // would lie, and crediting them as closed would hide the very thing we look for.
+  const judgeable = closed.filter((w) => w.refreshedAt && w.state);
+  const counts = {
+    judged: judgeable.length,
+    unclosed: judgeable.filter((w) => !isClosed(w)).length,
+  };
+
+  const newest = closed[closed.length - 1];
+  const window = newest.window!;
+  const label = fmtWindow(window, zone);
+  const base = {
+    ...counts,
+    window,
+    refreshedAt: newest.refreshedAt,
+    refreshedText: newest.refreshedText,
+  };
+
+  if (!newest.refreshedAt) {
+    return {
+      ...base,
+      state: WeekCloseState.Unknown,
+      evidence: `The page for ${label} carries no refresh stamp, so whether that week was ever closed cannot be read.`,
+    };
+  }
+
+  const shortByMs = window.end.getTime() - newest.refreshedAt.getTime();
+  if (shortByMs > 0) {
+    const shortBy = humanGap(shortByMs);
+    return {
+      ...base,
+      state: WeekCloseState.Stale,
+      shortBy,
+      evidence: `The week of ${label} has ended, but its page was last refreshed "${newest.refreshedText}" — ${shortBy} before the week closed, so everything it reports stops there.`,
+    };
+  }
+
+  if (newest.state === PageState.Live) {
+    return {
+      ...base,
+      state: WeekCloseState.Unfrozen,
+      evidence: `The week of ${label} was refreshed through its close, but its banner still reads "Live page", so a finished week is presented as still in progress.`,
+    };
+  }
+
+  if (!newest.state) {
+    return {
+      ...base,
+      state: WeekCloseState.Unknown,
+      evidence: `The page for ${label} was refreshed through its close but carries no state banner, so whether it was frozen cannot be read.`,
+    };
+  }
+
+  return {
+    ...base,
+    state: WeekCloseState.Closed,
+    evidence: `The week of ${label} was closed with a final refresh at "${newest.refreshedText}".`,
+  };
+}
+
+/** Semantic tone for a week-close verdict, on the same scale as healthTone. */
+export function weekCloseTone(
+  state: WeekCloseState,
+): "ok" | "warn" | "alert" | "neutral" {
+  if (state === WeekCloseState.Closed) return "ok";
+  // Stale is the only one that means the archived numbers are actually wrong.
+  if (state === WeekCloseState.Stale) return "alert";
+  if (state === WeekCloseState.Pending) return "neutral";
   return "warn";
 }

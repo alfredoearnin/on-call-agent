@@ -12,7 +12,13 @@ import {
   TriggerStatus,
 } from "@/lib/constants";
 import { readGitEvidence } from "@/lib/automations/git-evidence";
-import { assessAutomations, type AutomationHealth } from "@/lib/automations/health";
+import { readPageArchive } from "@/lib/automations/page-evidence";
+import {
+  assessAutomations,
+  assessWeekClose,
+  type AutomationHealth,
+  type WeekCloseHealth,
+} from "@/lib/automations/health";
 
 export async function getSyncSettings() {
   return prisma.syncSettings.findUnique({ where: { id: "singleton" } });
@@ -327,6 +333,28 @@ export async function getAutomationHealth(
       noRun: !run,
     },
   });
+}
+
+/**
+ * Whether the Tuesday handoff actually closed the week that ended.
+ *
+ * Separate from getAutomationHealth because it reads a different channel and
+ * answers a question the daily verdict structurally cannot. That one reads the
+ * ingested run, which only ever holds the newest page; this reads the archived
+ * pages on disk, so it can see a week that was published every day and still left
+ * truncated by the run that was supposed to close it.
+ *
+ * `team.timezone` is the zone the pages state their windows in, matching the
+ * ingest — so both agree on which local day a week ended.
+ */
+export async function getWeekClose(
+  now: Date = new Date(),
+): Promise<WeekCloseHealth | null> {
+  const cfg = getConfig();
+  if (!hasCloudAutomations(cfg)) return null;
+
+  const tz = cfg.team.timezone;
+  return assessWeekClose(readPageArchive(tz), now, tz, cfg.automations);
 }
 
 /** The most recent trigger fired from this dashboard, per automation. */

@@ -6,7 +6,12 @@ import {
   type TriggerMode,
 } from "@/components/rerun-automation-button";
 import { timeAgo } from "@/lib/format";
-import { healthTone, type AutomationHealth } from "@/lib/automations/health";
+import {
+  healthTone,
+  weekCloseTone,
+  type AutomationHealth,
+  type WeekCloseHealth,
+} from "@/lib/automations/health";
 
 /**
  * Presentational only, and deliberately secret-free: every prop is a resolved
@@ -31,7 +36,14 @@ export interface AutomationRow {
   warning: string | null;
 }
 
-export function AutomationPanel({ rows }: { rows: AutomationRow[] }) {
+export function AutomationPanel({
+  rows,
+  weekClose,
+}: {
+  rows: AutomationRow[];
+  /** Verdict on the last week that ended. Null when there are no automations. */
+  weekClose?: WeekCloseHealth | null;
+}) {
   if (rows.length === 0) return null;
 
   return (
@@ -112,6 +124,34 @@ export function AutomationPanel({ rows }: { rows: AutomationRow[] }) {
             </div>
           </div>
         ))}
+
+        {weekClose && (
+          <div className="space-y-1 border-t border-border pt-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">Week close</span>
+              <Badge tone={weekCloseTone(weekClose.state)}>
+                {weekClose.state}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              The two states above only ask whether a run happened today. This
+              asks whether the run that ended last week gave it a final refresh —
+              a week can be published every day and still be archived truncated.
+            </p>
+            {/* Verbatim, for the same reason as the health evidence above. */}
+            <p className="max-w-2xl text-xs text-muted-foreground">
+              {weekClose.evidence}
+            </p>
+            {weekClose.unclosed > 1 && (
+              <p className="max-w-2xl text-xs text-warn">
+                {weekClose.unclosed} of {weekClose.judged}{" "}
+                closed weeks on file were never given a final refresh, so each
+                one&apos;s totals stop before its week did. Any trend drawn
+                across them is short by whatever the missing days held.
+              </p>
+            )}
+          </div>
+        )}
 
         {rows.some((r) => r.mode === "blocked") && (
           <div className="rounded-md border border-warn/30 bg-warn/10 p-3 text-xs text-muted-foreground">
