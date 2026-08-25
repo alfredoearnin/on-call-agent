@@ -3,17 +3,93 @@ import { DateTime } from "luxon";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { Coverage, CoverageRole } from "@/lib/constants";
+import { Coverage, CoverageRole, PageState } from "@/lib/constants";
 import {
   parseCoverage,
   parseEventTime,
   parseOnCall,
+  parsePageState,
   parseRefreshedAt,
   parseWindow,
 } from "@/lib/ingest/sources/confluence-parse";
 
 const TZ = "America/Los_Angeles";
 const asDate = (d?: Date) => d?.toISOString().slice(0, 10);
+
+describe("parsePageState", () => {
+  // Verbatim first lines from the archive, because that is the only text the
+  // banner check is allowed to depend on.
+  const LIVE =
+    "🔄 **Live page** — refreshed daily during the on-call week " +
+    "(2026-08-18 → 2026-08-25). Last refreshed **2026-08-23 8:05 AM PT " +
+    "(America/Los_Angeles)**. This page freezes at the Tuesday handoff " +
+    "(2026-08-25); a new page opens for the next week.\n\n" +
+    "# Growth Team Ops Review — Weekly Handoff\n";
+  const FROZEN =
+    "🔒 **Frozen — final state at week close (2026-08-18).** This on-call week " +
+    "has ended; see the next week's page (2026-08-18 → 2026-08-25). " +
+    "Final refresh completed **2026-08-18 12:35 PM PT (America/Los_Angeles)**.\n\n" +
+    "# Growth Team Ops Review — Weekly Handoff\n";
+
+  it("reads a live page's banner", () => {
+    assert.equal(parsePageState(LIVE), PageState.Live);
+  });
+
+  it("reads a frozen page's banner", () => {
+    assert.equal(parsePageState(FROZEN), PageState.Frozen);
+  });
+
+  // The live banner PROMISES it "freezes at the Tuesday handoff". Matching that
+  // as frozen would report every open week as closed — silencing the exact check
+  // this parser exists to feed.
+  it("does not read a live page's promise to freeze as already frozen", () => {
+    assert.ok(/freezes/.test(LIVE), "fixture must contain the freeze promise");
+    assert.equal(parsePageState(LIVE), PageState.Live);
+  });
+
+  // Conversely, the frozen banner points at "the next week's page", and the body
+  // of any page describes numbers as "live". Neither is a state declaration.
+  it("does not read body prose as a banner", () => {
+    const noBanner =
+      "# Growth Team Ops Review — Weekly Handoff\n\n" +
+      "Totals are week-to-date (live, refreshed daily until it freezes at the " +
+      "Sep 1 handoff). The Frozen archive holds prior weeks.\n";
+
+    assert.equal(parsePageState(noBanner), undefined);
+  });
+
+  it("reads a definite state from every archived page that carries a banner", () => {
+    const dir = join(process.cwd(), "data", "confluence");
+    const files = readdirSync(dir).filter(
+      (f) => f.endsWith(".md") && !/ledger/i.test(f),
+    );
+    assert.ok(files.length > 0, "no handoff pages found to check");
+
+    for (const file of files) {
+      const md = readFileSync(join(dir, file), "utf8");
+      const state = parsePageState(md);
+      // Pages published before the banner existed carry none; that is "unknown",
+      // never "live". Any page that does carry one must resolve to exactly one state.
+      if (/^(?:🔄|🔒)/.test(md)) {
+        assert.ok(
+          state === PageState.Live || state === PageState.Frozen,
+          `${file}: banner present but state parsed as ${state}`,
+        );
+      }
+    }
+  });
+
+  // The page for the running week is the one the dashboard reads live, so it must
+  // never parse as frozen — that would make an open week look closed and correct.
+  it("reads the current week's page as live", () => {
+    const md = readFileSync(
+      join(process.cwd(), "data", "confluence", "handoff.md"),
+      "utf8",
+    );
+
+    assert.equal(parsePageState(md), PageState.Live);
+  });
+});
 
 describe("parseWindow", () => {
   it("reads the header window, not the next week's page cited in the banner", () => {

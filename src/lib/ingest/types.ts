@@ -10,6 +10,7 @@ import type {
   Confidence,
   RecommendationStatus,
   SourceStatus,
+  PageState,
 } from "@/lib/constants";
 
 export interface NormalizedMonitor {
@@ -192,6 +193,12 @@ export interface IngestBundle {
   window?: { start: Date; end: Date };
   /** The page's "Last refreshed" stamp. Absent on pages published before it existed. */
   pageRefresh?: PageRefresh;
+  /**
+   * The page's state banner. Absent means the page carried no banner — which is
+   * "unknown", never "live"; see PageState. Read together with `window`, this is
+   * what tells the dashboard whether a week that has ended was ever closed.
+   */
+  pageState?: PageState;
   /** The page's coverage check. Absent on pages published before it existed. */
   coverage?: PageCoverage;
   sourceStatus: {
