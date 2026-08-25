@@ -11,10 +11,72 @@ import {
 } from "@/lib/team-services";
 import { getConfig } from "@/lib/config";
 
-export function TeamServicesCard() {
+type Layout = "page" | "card";
+
+export function TeamServicesPanel({ layout = "page" }: { layout?: Layout }) {
   const cfg = getConfig();
   const groups = groupServicesByDomain(GROWTH_TEAM_SERVICES);
   const summary = summarizeOwnership(GROWTH_TEAM_SERVICES);
+
+  if (layout === "page") {
+    return (
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {groups.map(({ domain, label, services }) => (
+          <Card key={domain}>
+            <CardHeader className="pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base">{label}</CardTitle>
+                <Badge tone="neutral">{services.length}</Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2">
+                {services.map((svc) => (
+                  <ServiceRow key={svc.name} service={svc} site={cfg.datadog.site} />
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ))}
+
+        <Card className="xl:col-span-2">
+          <CardContent className="pt-4 text-xs text-muted-foreground">
+            <p>
+              Each service links to its Datadog APM entity (prod). Ownership
+              sources: Cortex catalog, Confluence ownership triage, and monitors
+              tagged <code className="rounded bg-muted px-1">{cfg.team.tag}</code>.
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              <a
+                href={GROWTH_SERVICES_CANVAS_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Growth audit canvas ↗
+              </a>
+              <a
+                href={CORTEX_OWNERSHIP_TRIAGE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Cortex ownership triage ↗
+              </a>
+              <a
+                href={`https://app.${cfg.datadog.site}/monitors/manage?q=tag%3A${encodeURIComponent(cfg.team.tag)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Datadog monitors ({cfg.team.tag}) ↗
+              </a>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <Card>
@@ -42,33 +104,6 @@ export function TeamServicesCard() {
             </ul>
           </div>
         ))}
-
-        <div className="border-t border-border pt-3 text-xs text-muted-foreground">
-          <p>
-            Confirmed entries match the Cortex catalog (L2/L3-PENG-Growth). Items
-            flagged for review are tagged{" "}
-            <code className="rounded bg-muted px-1">{cfg.team.tag}</code> in
-            Datadog but may belong to another team.
-          </p>
-          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-            <a
-              href={GROWTH_SERVICES_CANVAS_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              Growth audit canvas ↗
-            </a>
-            <a
-              href={CORTEX_OWNERSHIP_TRIAGE_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="text-primary hover:underline"
-            >
-              Cortex ownership triage ↗
-            </a>
-          </div>
-        </div>
       </CardContent>
     </Card>
   );

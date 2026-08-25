@@ -9,12 +9,14 @@ import {
   Settings,
   Activity,
   Flame,
+  Server,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const links = [
   { href: "/", label: "Overview", icon: LayoutDashboard },
   { href: "/daily", label: "Daily", icon: CalendarDays },
+  { href: "/services", label: "Services", icon: Server },
   { href: "/carryover", label: "Carryover", icon: Flame },
   { href: "/recommendations", label: "Recommendations", icon: Wrench },
   { href: "/settings", label: "Settings", icon: Settings },
