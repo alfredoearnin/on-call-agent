@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/kpi-card";
 import { TrendChart } from "@/components/trend-chart";
 import { OnCallBanner } from "@/components/on-call-banner";
+import { TeamServicesCard } from "@/components/team-services-card";
 import {
   assessCoverage,
   deserializeCoverage,
@@ -174,6 +175,8 @@ export default async function OverviewPage() {
         </Card>
 
         <div className="space-y-6">
+          <TeamServicesCard />
+
           <Card>
             <CardHeader>
               <CardTitle>SLOs / SLAs</CardTitle>
