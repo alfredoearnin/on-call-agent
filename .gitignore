@@ -16,6 +16,10 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 *.log
+# Rotated logs escape *.log (e.g. mcp.log.1), and MCP server logs are exactly
+# where a PAT or auth header lands on the next error.
+*.log.*
+/logs/
 
 # Secrets and local env — NEVER commit real env files (fintech rule).
 # Only .env.example (placeholders) is tracked.

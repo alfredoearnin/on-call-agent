@@ -45,6 +45,30 @@ Two Cursor Automations do the work; see [Keeping it fresh](#keeping-it-fresh-dai
 
 ---
 
+## The week boundary
+
+**An on-call week runs handoff → handoff: Tuesday 11:00 `America/Mexico_City`.** Not
+midnight. Everything that files data to a week — the prompt's queries, the page's
+window line, `resolveWindow`, `parseWindow` — uses that instant.
+
+This matters more than it sounds. Cut at midnight PT, a week ends ~10 hours before
+the rotation actually changes hands, so every page that fires on Tuesday morning is
+charged to the primary who was still asleep and not yet on call. The handoff zone has
+had no DST since 2022, so the boundary is a fixed **17:00 UTC** year-round; deriving it
+from a zone that shifts would move the rotation by an hour twice a year.
+
+The automations are scheduled **after** the boundary (12:00 and 13:00, same zone) for
+the same reason. Running before it meant the handoff run named the incoming primary
+before they were on call, and froze a week that still had hours left to run — see
+[Week close](#re-running-an-automation-from-the-dashboard).
+
+> **Reading the archive.** Pages written before this was modelled state only dates, and
+> their counts really were queried midnight-to-midnight, so `parseWindow` keeps them at
+> midnight and only honours a boundary time when the page states one. The two
+> generations coexist; nothing was retro-labelled.
+
+---
+
 ## The agent prompts
 
 The Health Check prompt in [`agents/`](./agents/) is **not documentation — it is the prompt** that the
@@ -298,7 +322,8 @@ documents everything.
 | `CURSOR_DASHBOARD_REFRESH_WEBHOOK_URL` / `_API_KEY` | re-run only | Webhook trigger for the daily-refresh automation (**secrets**). |
 | `CURSOR_WEBHOOK_AUTH_HEADER` / `_SCHEME` | no | Header the webhook key is sent in (default `x-api-key`, no scheme). Change if you get 401s. |
 | `CURSOR_HEALTH_CHECK_URL` / `CURSOR_DASHBOARD_REFRESH_URL` | no | cursor.com links shown on Settings (non-secret). |
-| `AUTOMATION_HOUR` / `_MINUTE` / `_TIMEZONE` / `_GRACE_MINUTES` | no | The automations' daily slot (default 9:00 `America/Chicago`, 180 min grace) used for the health verdict. |
+| `AUTOMATION_HOUR` / `_MINUTE` / `_TIMEZONE` / `_GRACE_MINUTES` | no | The earlier automation's daily slot (default 12:00 `America/Mexico_City`, 180 min grace) used for the health verdict. Set after the handoff so the closing week is complete before it is frozen. |
+| `HANDOFF_WEEKDAY` / `_HOUR` / `_MINUTE` / `_TIMEZONE` | no | When the rotation changes hands, which is the real boundary of an on-call week (default Tuesday 11:00 `America/Mexico_City`). Not midnight — see [The week boundary](#the-week-boundary). |
 
 Confluence and demo modes need **no** Datadog/incident.io/Jira keys — those are only
 for `live` mode and the Apply write path.

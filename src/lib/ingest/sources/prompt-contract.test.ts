@@ -111,6 +111,32 @@ describe("the canonical Health Check prompt", () => {
     assert.equal(window?.start.toISOString().slice(0, 10), "2026-08-18");
   });
 
+  /**
+   * The week boundary is the handoff (Tuesday 11:00 Mexico City), not midnight.
+   * The prompt has to say so and the parser has to agree, so this reads the
+   * prompt's own worked example and checks it resolves to the handoff instant —
+   * if either side drifts, weeks quietly revert to midnight and every Tuesday
+   * morning page is charged to the primary who was not on call yet.
+   */
+  it("pins the handoff boundary the window line must state", () => {
+    assert.ok(
+      /handoff_time/.test(HEALTH_CHECK) && /handoff_timezone/.test(HEALTH_CHECK),
+      "the handoff boundary is gone from the prompt — weeks silently return to midnight",
+    );
+
+    const example = HEALTH_CHECK.split("\n").find(
+      (l) =>
+        /On-call week/i.test(l) &&
+        /\d{1,2}:\d{2}/.test(l) &&
+        /\(America\//.test(l),
+    );
+    assert.ok(example, "the prompt shows no window line carrying a boundary time");
+
+    // 11:00 America/Mexico_City, which has no DST and so is 17:00 UTC all year.
+    const window = parseWindow(example, TZ);
+    assert.equal(window?.start.toISOString(), "2026-08-25T17:00:00.000Z");
+  });
+
   it("pins the TL;DR / What happened labels the detail panel splits on", () => {
     assert.ok(
       HEALTH_CHECK.includes("TL;DR:") && HEALTH_CHECK.includes("What happened:"),

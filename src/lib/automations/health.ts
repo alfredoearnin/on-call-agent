@@ -445,15 +445,16 @@ function humanGap(ms: number): string {
 /**
  * When the close of a week ending at `end` becomes late.
  *
- * A week ends at 00:00 local on the handoff day, but the run that closes it does
- * not start until that morning's slot. Judging from the window end alone would
- * paint every Tuesday morning red for a close that is not yet owed — and a weekly
- * false alarm on the loudest state in the vocabulary is how alerting gets ignored.
+ * A week ends when the rotation changes hands, but the run that closes it starts
+ * at the next slot after that. Judging from the window end alone would paint every
+ * handoff day red for a close that is not yet owed — and a weekly false alarm on
+ * the loudest state in the vocabulary is how alerting gets ignored.
  *
  * The handoff day is the calendar day the window ends in the PAGE's zone; the slot
- * is that day's slot in the SCHEDULE's zone. They genuinely differ (windows are
- * stated in PT, the automations are scheduled in CST), and going through the
- * calendar date rather than arithmetic on the instant keeps that unambiguous.
+ * is that day's slot in the SCHEDULE's zone. Going through the calendar date
+ * rather than arithmetic on the instant keeps the two unambiguous, and holds for
+ * both generations of page — those stating the 11:00 handoff boundary and the
+ * older ones cut at midnight, which land on the same date either way.
  */
 function closeDueAt(
   end: Date,
