@@ -104,6 +104,88 @@ describe("parseWindow", () => {
     assert.equal(asDate(window?.start), "2026-08-11");
     assert.equal(asDate(window?.end), "2026-08-18");
   });
+
+  /**
+   * The rotation changes hands Tuesdays at 11:00 Mexico City, so pages state
+   * that boundary explicitly. Reading it is what keeps a Tuesday-morning page
+   * attributed to the primary who was actually holding the pager.
+   */
+  it("honours the handoff boundary a page states", () => {
+    const window = parseWindow(
+      "**08/25/2026 Growth Team Ops Review** · On-call week " +
+        "**2026-08-25 11:00 → 2026-09-01 11:00** (America/Mexico_City).",
+      TZ,
+    );
+
+    assert.equal(window?.start.toISOString(), "2026-08-25T17:00:00.000Z");
+    assert.equal(window?.end.toISOString(), "2026-09-01T17:00:00.000Z");
+  });
+
+  /**
+   * Mexico City dropped DST in 2022, so the boundary is the same instant in
+   * January as in August. A page cut in the team zone would drift an hour here.
+   */
+  it("keeps the boundary fixed across a northern DST change", () => {
+    const window = parseWindow(
+      "On-call week **2027-01-19 11:00 → 2027-01-26 11:00** (America/Mexico_City).",
+      TZ,
+    );
+
+    assert.equal(window?.start.toISOString(), "2027-01-19T17:00:00.000Z");
+  });
+
+  /**
+   * The archive predates the boundary being modelled: those pages state only
+   * dates and their counts were queried midnight-to-midnight. Reading a handoff
+   * time into them would claim a window their contents never covered.
+   */
+  it("leaves a page that states no time at midnight in the team zone", () => {
+    const window = parseWindow(
+      "On-call week **2026-08-18 → 2026-08-25** (Tuesday → Tuesday, America/Los_Angeles).",
+      TZ,
+    );
+
+    assert.equal(window?.start.toISOString(), "2026-08-18T07:00:00.000Z");
+  });
+
+  /**
+   * The line loop skips lines citing the next week, so a frozen banner pushes the
+   * match down to the whole-document fallback — where a `\s` class would have let
+   * the end date pair with a time on the following line and move the boundary by
+   * hours. Every class in the pattern is newline-free for that reason.
+   */
+  it("never binds a boundary time from the following line", () => {
+    const window = parseWindow(
+      "🔒 Frozen. This on-call week has ended; see the next week 2026-08-18 → 2026-08-25\n" +
+        "11:00 AM PT is when the team syncs.",
+      TZ,
+    );
+
+    assert.equal(window?.end.toISOString(), "2026-08-25T07:00:00.000Z");
+  });
+
+  /**
+   * Zone names are page-supplied, and luxon caches zones by the raw string in maps
+   * it never evicts — so accepting casing variants would mint a permanent ICU
+   * formatter per variant. Resolving to the canonical spelling collapses them.
+   */
+  it("resolves a stated zone irrespective of its casing", () => {
+    const window = parseWindow(
+      "On-call week **2026-08-25 11:00 → 2026-09-01 11:00** (aMeRiCa/mExIcO_cItY).",
+      TZ,
+    );
+
+    assert.equal(window?.start.toISOString(), "2026-08-25T17:00:00.000Z");
+  });
+
+  it("falls back to the team zone when a stated zone is not a real one", () => {
+    const window = parseWindow(
+      "On-call week **2026-08-25 11:00 → 2026-09-01 11:00** (Mars/Olympus_Mons).",
+      TZ,
+    );
+
+    assert.equal(window?.start.toISOString(), "2026-08-25T18:00:00.000Z");
+  });
 });
 
 /**

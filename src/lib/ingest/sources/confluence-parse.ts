@@ -254,8 +254,27 @@ function parseTable(body: string): string[][] {
  * The bounds are generous against real pages: the widest real gap is the frozen
  * banner's "on-call week has ended; see the next week's page (" at 37 characters.
  */
-const WINDOW =
-  /on-call week[^\n]{0,120}?(\d{4}-\d{2}-\d{2})[^\n]{0,40}?(?:→|->)[^\n]{0,40}?(\d{4}-\d{2}-\d{2})/i;
+const WINDOW = new RegExp(
+  String.raw`on-call week[^\n]{0,120}?(\d{4}-\d{2}-\d{2})(?:[ \t*]{1,4}(\d{1,2}:\d{2}))?` +
+    String.raw`[^\n]{0,40}?(?:→|->)[^\n]{0,40}?(\d{4}-\d{2}-\d{2})(?:[ \t*]{1,4}(\d{1,2}:\d{2}))?` +
+    String.raw`(?:[^\n]{0,24}?\(([A-Za-z]{2,12}\/[A-Za-z_]{2,20})\))?`,
+  "i",
+);
+
+/**
+ * Canonical IANA names keyed by lowercase, so a page's casing cannot multiply
+ * luxon's zone cache.
+ *
+ * `IANAZone.isValidZone` accepts any casing, but luxon caches by the raw string
+ * in module-level maps it never evicts — so each novel casing of one zone mints a
+ * permanent ICU formatter (~73 KB, off-heap where a heap limit will not catch it).
+ * Resolving to a single spelling collapses them to one entry. Legacy aliases like
+ * `US/Pacific` are absent here and fall back to the team zone, which is the same
+ * zone they named anyway.
+ */
+const CANONICAL_ZONE = new Map(
+  Intl.supportedValuesOf("timeZone").map((z) => [z.toLowerCase(), z]),
+);
 
 /**
  * The state banner sits above the header and cites the *next* week's page ("a
@@ -272,14 +291,35 @@ function windowMatch(md: string): RegExpExecArray | null {
   return WINDOW.exec(md);
 }
 
+/**
+ * Read the window a page declares — including the boundary time, when it states
+ * one.
+ *
+ * A bare date means midnight, and that is not a default so much as a fact about
+ * the archive: pages written before the handoff boundary was modelled state only
+ * dates, and the counts on them were queried midnight-to-midnight. Inferring the
+ * real 11:00 handoff for those would label them with a window their own contents
+ * never covered. So a stated time is honoured and a missing one stays midnight,
+ * which lets the two generations of page coexist without a migration.
+ *
+ * `tz` is the fallback zone for a page that gives a time but names no zone.
+ */
 export function parseWindow(
   md: string,
   tz: string,
 ): { start: Date; end: Date } | undefined {
   const m = windowMatch(md);
   if (!m) return undefined;
-  const start = DateTime.fromISO(m[1], { zone: tz }).startOf("day");
-  const end = DateTime.fromISO(m[2], { zone: tz }).startOf("day");
+  const [, startDate, startTime, endDate, endTime, statedZone] = m;
+  const zone = (statedZone && CANONICAL_ZONE.get(statedZone.toLowerCase())) ?? tz;
+
+  const at = (date: string, time?: string) =>
+    time
+      ? DateTime.fromFormat(`${date} ${time}`, "yyyy-MM-dd H:mm", { zone })
+      : DateTime.fromISO(date, { zone }).startOf("day");
+
+  const start = at(startDate, startTime);
+  const end = at(endDate, endTime);
   if (!start.isValid || !end.isValid) return undefined;
   return { start: start.toJSDate(), end: end.toJSDate() };
 }

@@ -1,5 +1,13 @@
 # Growth Team Ops Review — Weekly Handoff Agent (Confluence edition)
 
+> **Version:** 2026-08-25b (the boundary is the handoff). Changes vs prior: the on-call week now
+> runs **handoff → handoff** (Tuesday 11:00 `America/Mexico_City`) instead of midnight → midnight,
+> and every page states that boundary explicitly in a fixed **Window line**. A Tuesday run
+> **before** 11:00 is now a normal daily run, not a handoff run. Prompted by finding that this
+> automation's slot fired ~2h *before* the rotation changed hands, so it named the incoming primary
+> before they were on call and Phase A closed weeks that still had hours left to run. Requires the
+> Cursor trigger to move to **12:00**; the dashboard refresh follows at 13:00.
+>
 > **Version:** 2026-08-25 (verify the week close). Changes vs prior: **Phase A** must now be
 > verified before Phase B starts — re-read the closing week's page and confirm the banner
 > reads frozen AND the stamp is the handoff date. If it cannot be closed, Phase B still runs
@@ -53,9 +61,16 @@ The page mirrors the team's standing **Ops Review agenda**:
 > automatically. Past-week pages stay frozen. In addition, a **single persistent Monitor Tuning
 > Ledger page** (not per-week) is maintained across all weeks as the agent's long-term memory.
 
-On-call hands off on **Tuesdays**, so the on-call week is **Tuesday → the following Tuesday**
-(e.g. `2026-06-23 → 2026-06-30`). The report covers **window start → now** (week-to-date),
-refreshed daily.
+On-call hands off on **Tuesdays at `handoff_time` in `handoff_timezone`** (11:00 America/
+Mexico_City), so the on-call week runs **handoff → the following handoff**
+(e.g. `2026-06-23 11:00 → 2026-06-30 11:00`). The report covers **window start → now**
+(week-to-date), refreshed daily.
+
+> **The boundary is the handoff, not midnight.** The rotation changes hands at 11:00, so a week
+> cut at midnight ends ~10 hours early and charges every page fired on Tuesday morning to the
+> primary who was not on call yet. Always query and label the window from the handoff instant.
+> `handoff_timezone` has had no DST since 2022, so that instant is a fixed 17:00 UTC year-round —
+> do not re-derive it from a zone that shifts.
 
 > **Live page, daily refresh, freezes at the handoff.** The current week's page is a **living
 > document**: it is regenerated every day from window start → now. On the **Tuesday handoff** it
@@ -71,7 +86,9 @@ refreshed daily.
 team_tag: "team:l2-peng-growth"               # Datadog tag scoping the team's monitors
 team_label: "Growth Team"                      # human-friendly name used in titles
 slack_channel: "#growth-eng-health-check"      # where the daily summary + page link is posted
-timezone: "America/Los_Angeles"                # PT, the team's on-call timezone
+timezone: "America/Los_Angeles"                # PT, the team's display timezone
+handoff_time: "11:00"                          # when the rotation actually changes hands
+handoff_timezone: "America/Mexico_City"        # the handoff's own zone; no DST, so a fixed UTC-6
 window_override: ""                             # optional: "2026-06-23..2026-06-30"
 
 # Standing links shown under SLOs / SLAs
@@ -189,16 +206,21 @@ Vulnerabilities: `searchJiraIssuesUsingJql`.
 
 - If `window_override` is set, use it as a single window, skip the Tuesday two-phase logic, and
   refresh only that page.
-- Otherwise compute, in `timezone`:
-  - `most_recent_tuesday` = today at 00:00 if today **is** Tuesday, else the previous Tuesday 00:00.
-  - `current_window` = `[most_recent_tuesday, most_recent_tuesday + 7d]`.
-  - `prior_window` = `[most_recent_tuesday − 7d, most_recent_tuesday]`.
+- Otherwise compute, in `handoff_timezone`:
+  - `last_handoff` = the most recent **Tuesday at `handoff_time`** that is **at or before now**.
+    On a Tuesday this is today only **once `handoff_time` has passed**; before that it is last
+    Tuesday. Step whole weeks in `handoff_timezone` so the instant never drifts with DST.
+  - `current_window` = `[last_handoff, last_handoff + 7d]`.
+  - `prior_window` = `[last_handoff − 7d, last_handoff]`.
 - **Run mode:**
-  - **Non-Tuesday (normal daily run):** refresh **only** the `current_window` page
-    (window start → now). `prior_window` is used only for comparison.
-  - **Tuesday (handoff day) — run BOTH phases, in this order:**
+  - **Normal daily run** (any day that is not a Tuesday at/after `handoff_time`): refresh **only**
+    the `current_window` page (window start → now). `prior_window` is used only for comparison.
+    - This includes a **Tuesday before `handoff_time`**: the rotation has not turned over, so the
+      week is still running. Do **not** run the two phases — freezing a page mid-week truncates
+      it and strands the last hours of the week.
+  - **Tuesday at/after `handoff_time` (handoff day) — run BOTH phases, in this order:**
     1. **Phase A — Close the week that just ended.** The closing week is `prior_window`
-       (it ends at today 00:00 and is now a complete 7 days). Recompute its full report and do a
+       (it ended at `last_handoff` and is now a complete 7 days). Recompute its full report and do a
        **final** `updateConfluencePage` on its page: set the banner to **frozen** and use
        `versionMessage: "Final refresh — week closed <end-date>"`. For Phase A comparisons,
        "prior" = the week before the closing week (`[start − 14d, start − 7d]`).
@@ -228,7 +250,8 @@ Vulnerabilities: `searchJiraIssuesUsingJql`.
 - For every window, also compute `days_elapsed = now − window_start` (in days; floor at ~0.04 so
   you never divide by zero), used for run-rate normalization in Step 1.
 - Convert bounds per tool (RFC 3339 for incident.io; ISO 8601 / `now-7d` for Datadog).
-- Put the exact window + "Last refreshed: <now> <timezone>" at the top of every artifact.
+- Put the exact window — **with its boundary time and zone**, per the Window line in Step 7 —
+  plus "Last refreshed: <now> <timezone>" at the top of every artifact.
 
 ### Step 0.5 — Load tuning memory (the ledger + recent weeks)
 
@@ -425,15 +448,26 @@ next step.
 0. **State banner (very top, before the header).**
    - **Live** (current week, daily runs): `<div data-type="panel-info">`
      `🔄 Live page — refreshed daily during the on-call week ({start} → {end}). Last refreshed
-     <now> <timezone>. This page freezes at the Tuesday handoff ({end}); a new page opens for the
-     next week.`
+     <now> <timezone>. This page freezes at the Tuesday handoff ({end} {handoff_time}
+     {handoff_timezone}); a new page opens for the next week.`
    - **Frozen** (Phase A final refresh, and any past week): `<div data-type="panel-note">`
      `🔒 Frozen — final state at week close ({end}). This on-call week has ended; see the next
      week's page.`
 1. **Header** — `<h1>` `"Growth Team Ops Review — Weekly Handoff"`; `<p>` with
-   `MM/DD/YYYY Growth Team Ops Review`, the window dates, source ("incident.io + Datadog,
+   `MM/DD/YYYY Growth Team Ops Review`, the window line, source ("incident.io + Datadog,
    read-only"), and "Last refreshed: <now> <timezone>". Include the on-call name(s) from
    `schedule_show` (current primary + next).
+   - **Window line — fixed wording.** The dashboard parses this to file the page to a week and to
+     scope every timestamp on it, so write it verbatim in this shape, including the boundary time
+     and the zone in parentheses:
+
+     `On-call week **{start} {handoff_time} → {end} {handoff_time}** ({handoff_timezone})`
+
+     e.g. `On-call week **2026-08-25 11:00 → 2026-09-01 11:00** (America/Mexico_City)`.
+
+     State the **time and the zone**. A page that gives only dates is read as a midnight-to-
+     midnight week, which is how the pages before this change were written — so omitting the time
+     silently backdates the window by ~10 hours instead of failing loudly.
    - **Rotation line — fixed wording.** The dashboard parses this sentence to fill the
      "On-call this week" banner, so write it verbatim in this shape, on its own line:
 
@@ -526,7 +560,7 @@ next step.
    deprecations, duplicate-monitor reviews). If none: "No action items this week."
 8. **`<h2>` {manual_notes_heading}** — the preserved human content, re-emitted verbatim
    (see "Preserve manual notes" above). This section is owned by humans; the agent never edits it.
-9. **Footer** — small `<p>`: sources, exact window + timezone, "Last refreshed" stamp,
+9. **Footer** — small `<p>`: sources, exact window (boundary time + zone), "Last refreshed" stamp,
    redaction note if any PII was scrubbed, and "No monitoring configuration was changed by this
    agent."
 
@@ -630,7 +664,8 @@ mistaken for a healthy one. This channel is the only place anyone would notice.
 - One Confluence page per on-call week; daily runs **overwrite** it (idempotent). On Tuesday the
   closing week gets a final refresh + freeze, then the new week opens. The Tuning Ledger is a
   single page updated on every run.
-- Always state exact window, timezone, and "Last refreshed" on every artifact.
+- Always state the exact window with its boundary time and zone, and "Last refreshed", on every
+  artifact.
 - Apply **customer-PII redaction** to everything published.
 - Prefer `*_stats`/`aggregate_events` for counts; reserve `*_list`/`*_show` for detail.
 

@@ -26,9 +26,11 @@ import {
 import type { GitEvidence } from "@/lib/automations/git-evidence";
 import type { ArchivedWeek } from "@/lib/automations/page-evidence";
 
-// The 9AM slot is expressed in America/Chicago, so in August it resolves in CDT
-// (UTC-5), not CST: 09:00 → 14:00Z, and +3h grace ⇒ today's deadline is 17:00Z.
-// Naming the zone rather than an offset is the point — luxon handles the shift.
+// A deliberately DST-shifting fixture, NOT the production slot (which is 12:00
+// America/Mexico_City, fixed at UTC-6). `closeDueAt` has to hold for whatever zone
+// is configured, so the fixture exercises the harder case: 09:00 America/Chicago
+// resolves in August to CDT (UTC-5), not CST — 09:00 → 14:00Z, and +3h grace ⇒
+// today's deadline is 17:00Z. Naming the zone rather than an offset is the point.
 const SCHEDULE: AutomationSchedule = {
   hour: 9,
   minute: 0,

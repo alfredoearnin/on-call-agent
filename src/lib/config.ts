@@ -33,6 +33,23 @@ export interface AppConfig {
     label: string;
     timezone: string;
   };
+  /**
+   * When the rotation actually changes hands, which is the real boundary of an
+   * on-call week.
+   *
+   * Deliberately NOT midnight in team.timezone. The handoff happens Tuesdays at
+   * 11:00 in Mexico City, so a week modelled as midnight-to-midnight PT starts
+   * and ends ~10h early and mis-attributes every Tuesday-morning page to the
+   * primary who was still asleep. `America/Mexico_City` has had no DST since
+   * 2022, so this instant is a fixed 17:00 UTC year-round.
+   */
+  handoff: {
+    /** Luxon weekday: Mon=1 ... Sun=7. */
+    weekday: number;
+    hour: number;
+    minute: number;
+    timezone: string;
+  };
   links: {
     dashboardUrl: string;
     bugsOoslaUrl: string;
@@ -79,13 +96,21 @@ export interface AppConfig {
     minute: number;
     /**
      * IANA zone the slot is expressed in. Deliberately NOT team.timezone: the
-     * automations are scheduled at 9AM CST while the dashboard displays in PT.
+     * dashboard displays in PT, but Cursor's scheduler labels this slot "CST"
+     * and holds it at a fixed UTC-6 with no DST shift. Measured on origin/main:
+     * scheduled `Daily refresh` commits land in a 16:08-16:18 UTC band, i.e. ~10
+     * min after a 16:00 UTC slot, not ~70 min after a 15:00 UTC one. So the zone
+     * is UTC-6 year-round, which `America/Mexico_City` expresses exactly — and
+     * naming it that way keeps the slot pinned to the handoff's own zone.
      */
     timezone: string;
     /**
-     * How long after the slot a run may still legitimately be in flight. Measured
-     * on origin/main: the refresh commit lands 60-160 min after the slot, so a
-     * shorter window would read as a failure every morning.
+     * How long after the slot a run may still legitimately be in flight.
+     *
+     * Sized to span BOTH automations, not one run's latency: `hour` is the
+     * earlier slot (health check) and the dashboard refresh follows an hour
+     * later, so the last evidence can arrive ~80 min in. A run itself only takes
+     * 10-20 min.
      */
     graceMinutes: number;
     /** Header the webhook API key is sent in. Cursor's docs do not name it. */
@@ -120,6 +145,12 @@ export function getConfig(): AppConfig {
       tag: str("TEAM_TAG", "team:l2-peng-growth"),
       label: str("TEAM_LABEL", "Growth Team"),
       timezone: str("TIMEZONE", "America/Los_Angeles"),
+    },
+    handoff: {
+      weekday: int("HANDOFF_WEEKDAY", 2),
+      hour: int("HANDOFF_HOUR", 11),
+      minute: int("HANDOFF_MINUTE", 0),
+      timezone: str("HANDOFF_TIMEZONE", "America/Mexico_City"),
     },
     links: {
       dashboardUrl: str(
@@ -171,9 +202,9 @@ export function getConfig(): AppConfig {
       operator: str("OPERATOR_NAME", "local-operator"),
     },
     automations: {
-      hour: int("AUTOMATION_HOUR", 9),
+      hour: int("AUTOMATION_HOUR", 12),
       minute: int("AUTOMATION_MINUTE", 0),
-      timezone: str("AUTOMATION_TIMEZONE", "America/Chicago"),
+      timezone: str("AUTOMATION_TIMEZONE", "America/Mexico_City"),
       graceMinutes: int("AUTOMATION_GRACE_MINUTES", 180),
       authHeader: str("CURSOR_WEBHOOK_AUTH_HEADER", "x-api-key"),
       authScheme: str("CURSOR_WEBHOOK_AUTH_SCHEME", ""),
