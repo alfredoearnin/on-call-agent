@@ -7,6 +7,7 @@ import { DatadogClient } from "@/lib/clients/datadog";
 import { AppliedChangeStatus, TargetScope } from "@/lib/constants";
 import {
   extractHandles,
+  isTeamMonitor,
   isValidHandle,
   isValidMonitorId,
   isValidPriority,
@@ -70,6 +71,14 @@ export async function previewMonitorRoutingAction(
       message: `Could not read monitor ${monitorId} from Datadog: ${
         err instanceof Error ? err.message : String(err)
       }. A routing change is never written without reading the current value first.`,
+    };
+  }
+
+  if (!isTeamMonitor(live.tags, cfg.team.tag)) {
+    return {
+      ok: false,
+      mode,
+      message: `Monitor ${monitorId} is not tagged ${cfg.team.tag}, so it belongs to another team. Rerouting it from here would move a pager we do not own.`,
     };
   }
 

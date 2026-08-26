@@ -112,6 +112,24 @@ function continuesHandle(ch: string | undefined): boolean {
   return /[A-Za-z0-9._@-]/.test(ch);
 }
 
+/**
+ * True when Datadog records `teamTag` on the monitor.
+ *
+ * `listMonitors` scopes its query with `monitor_tags`, but a read or write by
+ * id bypasses that filter entirely — nothing else stops this app from
+ * rerouting another team's pager. Tag comparison is case-insensitive because
+ * Datadog lowercases tags on ingest but not always on read.
+ */
+export function isTeamMonitor(
+  tags: string[] | undefined,
+  teamTag: string,
+): boolean {
+  if (!tags || tags.length === 0) return false;
+  const want = teamTag.trim().toLowerCase();
+  if (want === "") return false;
+  return tags.some((t) => t.trim().toLowerCase() === want);
+}
+
 /** Datadog priorities are 1 (highest) to 5. */
 export function isValidPriority(p: number): boolean {
   return Number.isInteger(p) && p >= 1 && p <= 5;

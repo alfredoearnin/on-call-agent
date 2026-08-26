@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   extractHandles,
+  isTeamMonitor,
   isValidHandle,
   isValidMonitorId,
   isValidPriority,
@@ -186,6 +187,27 @@ describe("rerouteMessage", () => {
       "@bob",
     );
     assert.equal(replaced, 0, "@alice is a prefix of an email handle here");
+  });
+});
+
+describe("isTeamMonitor", () => {
+  const TAG = "team:l2-peng-growth";
+
+  it("accepts a monitor Datadog records to the team", () => {
+    assert.ok(isTeamMonitor([TAG], TAG));
+    assert.ok(isTeamMonitor(["env:prod", TAG, "service:x"], TAG));
+    // Datadog is inconsistent about tag casing between ingest and read.
+    assert.ok(isTeamMonitor(["Team:L2-PENG-Growth"], TAG));
+    assert.ok(isTeamMonitor([` ${TAG} `], TAG));
+  });
+
+  it("refuses a monitor that is not the team's", () => {
+    assert.ok(!isTeamMonitor(undefined, TAG));
+    assert.ok(!isTeamMonitor([], TAG));
+    assert.ok(!isTeamMonitor(["team:l2-peng-cashout"], TAG));
+    // A prefix is not the tag: another team's tag must not pass on substring.
+    assert.ok(!isTeamMonitor(["team:l2-peng-growth-platform"], TAG));
+    assert.ok(!isTeamMonitor([TAG], ""));
   });
 });
 
