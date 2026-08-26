@@ -39,12 +39,16 @@ export default async function DailyPage({
     data.weeks.find((w) => w.start === data.selectedWeek)?.label ??
     data.selectedWeek;
   const scope = isAllWeek ? "week" : "day";
-  const view = viewParam === "timeline" ? "timeline" : "list";
+  // Timeline is the default: the question this page gets opened with is "what
+  // happened, and in what order", and the list is the drill-down from there.
+  const view = viewParam === "list" ? "list" : "timeline";
   const timelineAlerts = [...data.requiredHumanAttention, ...data.autoResolved];
 
+  // Only the non-default view carries a param, so the common URL stays short —
+  // and an absent `view` reads as timeline everywhere.
   const tabHref = (v: string) => {
     const p = new URLSearchParams({ week: data.selectedWeek, day: data.selectedDay });
-    if (v !== "list") p.set("view", v);
+    if (v !== "timeline") p.set("view", v);
     return `/daily?${p.toString()}`;
   };
 
