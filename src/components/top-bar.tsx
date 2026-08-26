@@ -70,7 +70,7 @@ export async function TopBar() {
             <>
               <span aria-hidden="true">·</span>
               <span className={SOURCE_CLASS[source.tone]} title={source.note}>
-                {source.age ? `source ${source.age} old` : "source age unknown"}
+                {source.label}
               </span>
             </>
           )}

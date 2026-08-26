@@ -601,6 +601,13 @@ export interface SourceFreshness {
   refreshedAt?: Date;
   /** Its age on the same scale as the week-close gaps ("21 h", "3.2 days"). */
   age?: string;
+  /**
+   * The compact form for the header, rendered VERBATIM. It lives here rather
+   * than in the component because "how do we describe this state" is the same
+   * honesty question as `note`, and answering it in two places is how the two
+   * drift apart.
+   */
+  label: string;
   tone: "ok" | "warn" | "alert" | "neutral";
   /**
    * One sentence naming what the page says and how that sits against the slot,
@@ -638,6 +645,7 @@ export function assessSourceFreshness(
 ): SourceFreshness {
   if (page.noRun) {
     return {
+      label: "no source yet",
       tone: "neutral",
       stale: false,
       note: "Nothing has been ingested in this checkout yet, so there is no source to age.",
@@ -650,6 +658,7 @@ export function assessSourceFreshness(
       : "";
     return {
       refreshedText: page.refreshedText,
+      label: "source age unknown",
       tone: "warn",
       stale: false,
       note: `The ingested handoff page carries no readable "Last refreshed" time, so the age of what you are reading cannot be established.${quoted}`,
@@ -666,6 +675,7 @@ export function assessSourceFreshness(
   if (ageMs < -FUTURE_TOLERANCE_MS) {
     return {
       ...base,
+      label: "source age unknown",
       tone: "warn",
       stale: false,
       note: `The page claims "Last refreshed ${quoted}", which is in the future — treating its age as unreadable.`,
@@ -683,6 +693,7 @@ export function assessSourceFreshness(
     return {
       ...base,
       age,
+      label: `source ${age} old`,
       tone: "ok",
       stale: false,
       note: `The handoff page says "Last refreshed ${quoted}" — ${age} ago — and has been rewritten since its last scheduled refresh. The next one is due ${next}.`,
@@ -696,6 +707,7 @@ export function assessSourceFreshness(
   return {
     ...base,
     age,
+    label: `source ${age} old`,
     stale: true,
     tone: missedTwo ? "alert" : "warn",
     note: `The handoff page still says "Last refreshed ${quoted}" — ${age} ago — and the refresh due ${fmtStamp(due.toJSDate(), schedule.timezone)} has not landed. Anything that fired since that stamp is not in this dashboard, so an empty week here is not evidence of a quiet week.`,
