@@ -22,6 +22,7 @@ import {
   worstState,
   type AutomationHealth,
   type AutomationSchedule,
+  type DiskPage,
   type PageEvidence,
 } from "@/lib/automations/health";
 import type { GitEvidence } from "@/lib/automations/git-evidence";
@@ -562,12 +563,63 @@ describe("assessSourceFreshness", () => {
     assert.equal(f.age, undefined);
     assert.match(f.note, /in the future/);
   });
+
+  it("reports the ingested copy being behind the page in the repo", () => {
+    // The failure this figure exists to catch, and the one it could otherwise
+    // hide: `prisma/oncall.db` is tracked, so a pull replaces it under a running
+    // server, which then serves the pre-pull database however often the ingest
+    // runs. Ageing the ingested stamp alone would call that copy fresh.
+    const f = freshnessOf(
+      pageStamped("2026-08-19T22:00:00Z", "2026-08-19 3:00 PM PT"),
+      AFTER_DUE,
+      { refreshedAt: new Date("2026-08-20T18:00:00Z"), refreshedText: "2026-08-20 11:00 AM PT" },
+    );
+
+    assert.equal(f.behindDisk, true);
+    assert.equal(f.stale, true);
+    assert.equal(f.tone, "warn");
+    // An age in the header would read as reassurance while the figure is wrong.
+    assert.equal(f.label, "sync behind source");
+    // Both stamps must be quoted, or the reader cannot see which is which.
+    assert.match(f.note, /2026-08-20 11:00 AM PT/);
+    assert.match(f.note, /2026-08-19 3:00 PM PT/);
+    // The age shown is the SOURCE's, not the superseded copy's.
+    assert.equal(f.age, "1.0 h");
+  });
+
+  it("ages the ingested stamp when the repo holds nothing newer", () => {
+    const f = freshnessOf(
+      pageStamped("2026-08-20T18:00:00Z", "2026-08-20 11:00 AM PT"),
+      AFTER_DUE,
+      { refreshedAt: new Date("2026-08-20T18:00:00Z"), refreshedText: "2026-08-20 11:00 AM PT" },
+    );
+
+    assert.equal(f.behindDisk, undefined);
+    assert.equal(f.tone, "ok");
+    assert.equal(f.label, `source ${f.age} old`);
+  });
+
+  it("does not claim to be behind when the archive is unreadable", () => {
+    // readPageArchive returns no weeks rather than throwing, and absence of
+    // evidence must not become evidence of a stale ingest.
+    const f = freshnessOf(
+      pageStamped("2026-08-20T18:00:00Z", "2026-08-20 11:00 AM PT"),
+      AFTER_DUE,
+      {},
+    );
+
+    assert.equal(f.behindDisk, undefined);
+    assert.equal(f.tone, "ok");
+  });
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-const freshnessOf = (page: PageEvidence, now: Date = AFTER_DUE) =>
-  assessSourceFreshness(page, now, PT, SCHEDULE);
+const freshnessOf = (
+  page: PageEvidence,
+  now: Date = AFTER_DUE,
+  onDisk?: DiskPage,
+) => assessSourceFreshness(page, now, PT, SCHEDULE, onDisk);
 
 const week = (over: Partial<ArchivedWeek> = {}): ArchivedWeek => ({
   file: "handoff-2026-08-18.md",
