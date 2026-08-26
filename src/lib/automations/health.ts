@@ -578,3 +578,126 @@ export function weekCloseTone(
   if (state === WeekCloseState.Pending) return "neutral";
   return "warn";
 }
+
+// ── Source freshness ────────────────────────────────────────────────────────
+
+/**
+ * How old the data on screen is — as opposed to how recently we synced it.
+ *
+ * "Last synced" measures this checkout, not the source: `npm run ingest` bumps it
+ * whether or not the page it parsed changed. So a dashboard fed by a page that
+ * stopped being rewritten yesterday afternoon still reads "synced 2 minutes ago",
+ * and a week with nothing in it looks quiet rather than blind. The two figures
+ * have to be shown together or the fresher one speaks for the stale one.
+ *
+ * Staleness is measured against the schedule rather than a fixed number of hours:
+ * the source is expected to be rewritten once per slot, so "older than the last
+ * slot that came due" is exactly one missed refresh, and it follows the slot if
+ * the slot moves.
+ */
+export interface SourceFreshness {
+  /** The page's stamp verbatim, for quoting. */
+  refreshedText?: string;
+  refreshedAt?: Date;
+  /** Its age on the same scale as the week-close gaps ("21 h", "3.2 days"). */
+  age?: string;
+  tone: "ok" | "warn" | "alert" | "neutral";
+  /**
+   * One sentence naming what the page says and how that sits against the slot,
+   * rendered VERBATIM — same contract as AutomationHealth.evidence.
+   */
+  note: string;
+  /** The source missed at least one scheduled refresh. */
+  stale: boolean;
+}
+
+const fmtStamp = (d: Date, zone: string) =>
+  DateTime.fromJSDate(d, { zone }).toFormat("LLL d, h:mm a ZZZZ");
+
+/** The most recent slot whose grace window has already closed. */
+function lastDueSlot(now: Date, schedule: AutomationSchedule): DateTime {
+  const slot = DateTime.fromJSDate(now, { zone: schedule.timezone })
+    .set({
+      hour: schedule.hour,
+      minute: schedule.minute,
+      second: 0,
+      millisecond: 0,
+    })
+    .plus({ minutes: schedule.graceMinutes });
+  // Before today's slot comes due, the refresh we are entitled to expect is
+  // yesterday's — otherwise every morning would read as a missed cycle.
+  return slot.toMillis() <= now.getTime() ? slot : slot.minus({ days: 1 });
+}
+
+export function assessSourceFreshness(
+  page: PageEvidence,
+  now: Date,
+  /** Zone the page states its own stamp in, for quoting it back. */
+  zone: string,
+  schedule: AutomationSchedule,
+): SourceFreshness {
+  if (page.noRun) {
+    return {
+      tone: "neutral",
+      stale: false,
+      note: "Nothing has been ingested in this checkout yet, so there is no source to age.",
+    };
+  }
+
+  if (!page.refreshedAt) {
+    const quoted = page.refreshedText
+      ? ` Its stamp reads "${page.refreshedText}".`
+      : "";
+    return {
+      refreshedText: page.refreshedText,
+      tone: "warn",
+      stale: false,
+      note: `The ingested handoff page carries no readable "Last refreshed" time, so the age of what you are reading cannot be established.${quoted}`,
+    };
+  }
+
+  const base = {
+    refreshedAt: page.refreshedAt,
+    refreshedText: page.refreshedText,
+  };
+  const quoted = page.refreshedText ?? localDate(page.refreshedAt, zone) ?? "";
+  const ageMs = now.getTime() - page.refreshedAt.getTime();
+
+  if (ageMs < -FUTURE_TOLERANCE_MS) {
+    return {
+      ...base,
+      tone: "warn",
+      stale: false,
+      note: `The page claims "Last refreshed ${quoted}", which is in the future — treating its age as unreadable.`,
+    };
+  }
+
+  const age = humanGap(Math.max(ageMs, 0));
+  const due = lastDueSlot(now, schedule);
+
+  if (page.refreshedAt.getTime() >= due.toMillis()) {
+    // Naming the NEXT slot, not the one just satisfied: a reader looking at an
+    // age of 21 h wants to know whether to worry and when that changes, and the
+    // slot already met tells them neither.
+    const next = fmtStamp(due.plus({ days: 1 }).toJSDate(), schedule.timezone);
+    return {
+      ...base,
+      age,
+      tone: "ok",
+      stale: false,
+      note: `The handoff page says "Last refreshed ${quoted}" — ${age} ago — and has been rewritten since its last scheduled refresh. The next one is due ${next}.`,
+    };
+  }
+
+  // Two cycles is a different problem from one: a single miss is a run that
+  // failed, a run of them is the source no longer being maintained daily.
+  const missedTwo =
+    page.refreshedAt.getTime() < due.minus({ days: 1 }).toMillis();
+  return {
+    ...base,
+    age,
+    stale: true,
+    tone: missedTwo ? "alert" : "warn",
+    note: `The handoff page still says "Last refreshed ${quoted}" — ${age} ago — and the refresh due ${fmtStamp(due.toJSDate(), schedule.timezone)} has not landed. Anything that fired since that stamp is not in this dashboard, so an empty week here is not evidence of a quiet week.`,
+  };
+}
