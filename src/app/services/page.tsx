@@ -5,10 +5,12 @@ import {
   CORTEX_OWNERSHIP_TRIAGE_URL,
   OWNERSHIP_INVENTORY_URL,
   OWNERSHIP_REVIEWED_ON,
+  dropList,
   onCallScope,
+  servicesByVerdict,
   summarizeOwnership,
 } from "@/lib/team-services";
-import { getServiceMonitors } from "@/lib/queries";
+import { getOwnershipDecisions, getServiceMonitors } from "@/lib/queries";
 import { TeamServicesPanel } from "@/components/team-services-panel";
 import { OwnershipFindings } from "@/components/ownership-findings";
 import { KpiCard } from "@/components/kpi-card";
@@ -20,13 +22,18 @@ export default async function ServicesPage() {
   const cfg = getConfig();
   const summary = summarizeOwnership(GROWTH_TEAM_SERVICES);
   const scope = onCallScope();
-  const monitors = await getServiceMonitors(
-    GROWTH_TEAM_SERVICES.map((s) => s.name),
-  );
+  const [monitors, decisions] = await Promise.all([
+    getServiceMonitors(GROWTH_TEAM_SERVICES.map((s) => s.name)),
+    getOwnershipDecisions(),
+  ]);
   const monitorCount = Object.values(monitors).reduce(
     (n, list) => n + list.length,
     0,
   );
+  const decidedIn = (services: typeof GROWTH_TEAM_SERVICES) =>
+    services.filter((s) => decisions[s.name]).length;
+  const droppedDecided = decidedIn(dropList());
+  const disputedDecided = decidedIn(servicesByVerdict("disputed"));
 
   return (
     <div className="space-y-6">
@@ -66,13 +73,19 @@ export default async function ServicesPage() {
           label="Disputed"
           value={summary.disputed}
           tone={summary.disputed > 0 ? "warn" : "ok"}
-          sub={`Claimed by us, recorded to ${summary.counterparties.length} other teams`}
+          sub={`${disputedDecided} decided · ${summary.counterparties.length} other teams`}
         />
         <KpiCard
           label="Should drop"
           value={summary.unsupported}
-          tone={summary.unsupported > 0 ? "alert" : "ok"}
-          sub="Handed off, deprecated, or bad tag"
+          tone={
+            summary.unsupported > droppedDecided
+              ? "alert"
+              : summary.unsupported === 0
+                ? "ok"
+                : "info"
+          }
+          sub={`${droppedDecided} decided · ${summary.unsupported - droppedDecided} pending`}
         />
       </div>
 
@@ -119,7 +132,11 @@ export default async function ServicesPage() {
         </CardContent>
       </Card>
 
-      <OwnershipFindings monitors={monitors} site={cfg.datadog.site} />
+      <OwnershipFindings
+        monitors={monitors}
+        decisions={decisions}
+        site={cfg.datadog.site}
+      />
 
       <section className="space-y-3">
         <div>
@@ -134,7 +151,7 @@ export default async function ServicesPage() {
               : ` ${monitorCount} ingested monitors are linked by id below.`}
           </p>
         </div>
-        <TeamServicesPanel monitors={monitors} />
+        <TeamServicesPanel monitors={monitors} decisions={decisions} />
       </section>
     </div>
   );

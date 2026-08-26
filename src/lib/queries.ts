@@ -341,6 +341,46 @@ export async function getServiceMonitors(
   return byService;
 }
 
+export interface OwnershipDecisionRef {
+  id: string;
+  action: string;
+  targetTeam: string | null;
+  verdict: string;
+  operator: string;
+  decidedAt: Date;
+}
+
+/**
+ * The live ownership decision per service, keyed by service tag.
+ *
+ * The table is append-only, so "live" is the newest unrevoked row for a service.
+ * Fetching every unrevoked row and keeping the first per service works because
+ * the result is ordered newest-first — and it stays one query rather than one
+ * per service.
+ */
+export async function getOwnershipDecisions(): Promise<
+  Record<string, OwnershipDecisionRef>
+> {
+  const rows = await prisma.ownershipDecision.findMany({
+    where: { revokedAt: null },
+    orderBy: { decidedAt: "desc" },
+  });
+
+  const byService: Record<string, OwnershipDecisionRef> = {};
+  for (const r of rows) {
+    if (byService[r.service]) continue;
+    byService[r.service] = {
+      id: r.id,
+      action: r.action,
+      targetTeam: r.targetTeam,
+      verdict: r.verdict,
+      operator: r.operator,
+      decidedAt: r.decidedAt,
+    };
+  }
+  return byService;
+}
+
 export async function getProductionIncidents(runWindowStart?: Date) {
   return prisma.incident.findMany({
     where: {

@@ -17,6 +17,8 @@
  * here; `verdictFor()` derives the disagreement instead of hardcoding a winner.
  */
 
+import { OwnershipAction } from "@/lib/constants";
+
 export type ServiceDomain =
   | "referrals"
   | "notifications"
@@ -526,6 +528,135 @@ export const VERDICT_LABELS: Record<OwnershipVerdict, string> = {
 
 export function domainLabel(domain: ServiceDomain): string {
   return DOMAIN_LABELS[domain];
+}
+
+/** One button the Services page may offer for a service. */
+export interface OwnershipActionOption {
+  action: OwnershipAction;
+  /** Button text, already naming the receiving team where there is one. */
+  label: string;
+  /** Receiving team, for hand-off and concede. */
+  targetTeam?: string;
+  /** Why this action is the one the evidence points to. */
+  rationale: string;
+}
+
+/**
+ * The actions worth offering for a service, derived from its verdict so the
+ * buttons can never contradict the finding they sit under.
+ *
+ * `Keep` is always offered: every finding must be answerable by rejecting it,
+ * otherwise a wrong verdict has no exit. Everything else follows the evidence —
+ * a hand-off names the team the inventory chose, a concede names the team Cortex
+ * already records, and a tag that does not resolve gets fixed before anyone
+ * argues about who owns it.
+ *
+ * The server re-derives this on write, so a client cannot record an action the
+ * evidence does not support.
+ */
+export function actionsFor(service: TeamService): OwnershipActionOption[] {
+  const verdict = verdictFor(service);
+  const keep: OwnershipActionOption = {
+    action: OwnershipAction.Keep,
+    label: "Keep in scope",
+    rationale: "Reject the finding and leave the service in the rotation.",
+  };
+
+  if (verdict === "corroborated") return [];
+
+  if (verdict === "disputed") {
+    const foreign = service.cortexOwners.filter((t) => !t.endsWith("-Growth"));
+    return [
+      {
+        action: OwnershipAction.Claim,
+        label: "Claim for Growth",
+        rationale: `The inventory keeps it; retag Cortex from ${foreign.join(", ")} to Growth.`,
+      },
+      ...foreign.map((team) => ({
+        action: OwnershipAction.Concede,
+        label: `Concede to ${team}`,
+        targetTeam: team,
+        rationale: `Drop the claim and leave ${team} as the recorded owner.`,
+      })),
+      keep,
+    ];
+  }
+
+  switch (dropReasonFor(service)) {
+    case "handed-off":
+      return [
+        {
+          action: OwnershipAction.HandOff,
+          label: `Hand off to ${service.handoffTarget}`,
+          targetTeam: service.handoffTarget,
+          rationale: `The inventory already assigns this to ${service.handoffTarget}.`,
+        },
+        keep,
+      ];
+    case "deprecated":
+      return [
+        {
+          action: OwnershipAction.Delete,
+          label: "Mark for deletion",
+          rationale:
+            "Slated for deletion rather than transfer; its monitors go with it.",
+        },
+        keep,
+      ];
+    case "unknown-tag":
+      return [
+        {
+          action: OwnershipAction.FixTag,
+          label: "Fix the tag",
+          rationale:
+            "The tag resolves to nothing in Cortex, so it cannot be owned or paged by name.",
+        },
+        keep,
+      ];
+    case "other-team": {
+      const owner = service.cortexOwners[0];
+      return [
+        {
+          action: OwnershipAction.Concede,
+          label: `Concede to ${owner}`,
+          targetTeam: owner,
+          rationale: `Cortex records ${owner} and the inventory never claimed it.`,
+        },
+        keep,
+      ];
+    }
+    default:
+      return [keep];
+  }
+}
+
+/**
+ * The offered action matching `action` + `targetTeam`, or undefined when the
+ * evidence no longer supports it — which is how a decision taken against an
+ * older verdict is detected.
+ */
+export function optionFor(
+  service: TeamService,
+  action: string,
+  targetTeam?: string | null,
+): OwnershipActionOption | undefined {
+  return actionsFor(service).find(
+    (o) =>
+      o.action === action && (o.targetTeam ?? null) === (targetTeam ?? null),
+  );
+}
+
+/** True when `action` (with `targetTeam`) is one the evidence supports. */
+export function isActionAllowed(
+  service: TeamService,
+  action: string,
+  targetTeam?: string | null,
+): boolean {
+  return optionFor(service, action, targetTeam) !== undefined;
+}
+
+export function serviceByName(name: string): TeamService | undefined {
+  return GROWTH_TEAM_SERVICES.find((s) => s.name === name);
 }
 
 /**

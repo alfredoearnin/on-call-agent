@@ -9,7 +9,7 @@ import {
   type DropReason,
   type TeamService,
 } from "@/lib/team-services";
-import type { ServiceMonitorRef } from "@/lib/queries";
+import type { OwnershipDecisionRef, ServiceMonitorRef } from "@/lib/queries";
 
 /** Ordered worst-first: an entry we already gave away is more urgent than a bad tag. */
 const REASON_ORDER: DropReason[] = [
@@ -32,9 +32,11 @@ const REASON_DETAIL: Record<DropReason, string> = {
 
 export function OwnershipFindings({
   monitors,
+  decisions,
   site,
 }: {
   monitors: Record<string, ServiceMonitorRef[]>;
+  decisions: Record<string, OwnershipDecisionRef>;
   site: string;
 }) {
   const dropped = dropList();
@@ -84,6 +86,7 @@ export function OwnershipFindings({
                         service={svc}
                         site={site}
                         monitors={monitors[svc.name] ?? []}
+                        decision={decisions[svc.name]}
                       />
                     ))}
                   </ul>
@@ -124,6 +127,7 @@ export function OwnershipFindings({
                         service={svc}
                         site={site}
                         monitors={monitors[svc.name] ?? []}
+                        decision={decisions[svc.name]}
                       />
                     ))}
                   </ul>

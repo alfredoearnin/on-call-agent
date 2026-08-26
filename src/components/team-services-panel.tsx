@@ -5,18 +5,22 @@ import {
   OWNERSHIP_INVENTORY_URL,
   OWNERSHIP_REVIEWED_ON,
   VERDICT_LABELS,
+  actionsFor,
   datadogMonitorSearchUrl,
   datadogServiceUrl,
   dropReasonFor,
   groupServicesByDomain,
   onCallScope,
+  optionFor,
   verdictFor,
   type OwnershipVerdict,
   type TeamService,
 } from "@/lib/team-services";
 import { getConfig } from "@/lib/config";
+import { buildHandoffDraft } from "@/lib/ownership-draft";
 import { priorityTone } from "@/lib/format";
-import type { ServiceMonitorRef } from "@/lib/queries";
+import { OwnershipActions } from "@/components/ownership-actions";
+import type { OwnershipDecisionRef, ServiceMonitorRef } from "@/lib/queries";
 
 const VERDICT_TONE: Record<OwnershipVerdict, string> = {
   corroborated: "ok",
@@ -26,8 +30,10 @@ const VERDICT_TONE: Record<OwnershipVerdict, string> = {
 
 export function TeamServicesPanel({
   monitors = {},
+  decisions = {},
 }: {
   monitors?: Record<string, ServiceMonitorRef[]>;
+  decisions?: Record<string, OwnershipDecisionRef>;
 }) {
   const cfg = getConfig();
   const groups = groupServicesByDomain(onCallScope());
@@ -51,6 +57,7 @@ export function TeamServicesPanel({
                     service={svc}
                     site={cfg.datadog.site}
                     monitors={monitors[svc.name] ?? []}
+                    decision={decisions[svc.name]}
                   />
                 ))}
               </ul>
@@ -97,11 +104,14 @@ export function ServiceRow({
   service,
   site,
   monitors,
+  decision,
 }: {
   service: TeamService;
   site: string;
   monitors: ServiceMonitorRef[];
+  decision?: OwnershipDecisionRef;
 }) {
+  const cfg = getConfig();
   const display = service.label ?? service.name;
   const verdict = verdictFor(service);
   const reason = dropReasonFor(service);
@@ -109,6 +119,26 @@ export function ServiceRow({
     (tag) => !tag.endsWith("-Growth"),
   );
 
+  // A decision taken before a catalog correction may no longer have a matching
+  // option; without one there is nothing to draft, and the row says so.
+  const decidedOption = decision
+    ? optionFor(service, decision.action, decision.targetTeam)
+    : undefined;
+  const draft =
+    decision && decidedOption
+      ? buildHandoffDraft({
+          service,
+          option: decidedOption,
+          monitors,
+          jira: {
+            baseUrl: cfg.jira.baseUrl,
+            projectId: cfg.jira.handoffProjectId,
+            issueTypeId: cfg.jira.handoffIssueTypeId,
+          },
+          datadogSite: site,
+          operator: decision.operator,
+        })
+      : undefined;
 
   return (
     <li className="rounded-md px-1 py-1 hover:bg-muted/40">
@@ -158,6 +188,14 @@ export function ServiceRow({
       )}
 
       <MonitorLinks service={service} site={site} monitors={monitors} />
+
+      <OwnershipActions
+        serviceName={service.name}
+        options={actionsFor(service)}
+        decision={decision}
+        draft={draft}
+        decidedOnVerdict={decision ? decision.verdict === verdict : undefined}
+      />
     </li>
   );
 }

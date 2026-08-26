@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { OwnershipAction } from "@/lib/constants";
 import {
   DROP_REASON_LABELS,
   GROWTH_TEAM_SERVICES,
+  actionsFor,
+  isActionAllowed,
+  serviceByName,
   domainLabel,
   dropList,
   dropReasonFor,
@@ -267,6 +271,145 @@ describe("groupServicesByDomain", () => {
       const names = g.services.map((s) => s.name);
       assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b)));
     }
+  });
+});
+
+describe("actionsFor", () => {
+  it("offers nothing when all three sources already agree", () => {
+    assert.deepEqual(actionsFor(makeService()), []);
+  });
+
+  it("offers a hand-off naming the team the inventory chose", () => {
+    const svc = makeService({
+      sheetIntent: "hand-off",
+      handoffTarget: "Cashout",
+      cortexOwners: ["L3-PENG-Activation"],
+    });
+    const actions = actionsFor(svc);
+    const handoff = actions.find((a) => a.action === OwnershipAction.HandOff);
+    assert.ok(handoff);
+    assert.equal(handoff.targetTeam, "Cashout");
+    assert.match(handoff.label, /Cashout/);
+  });
+
+  it("offers deletion for a deprecated service, not a hand-off", () => {
+    const actions = actionsFor(
+      makeService({ sheetIntent: "deprecate", cortexOwners: ["L3-PENG-Activation"] }),
+    );
+    assert.ok(actions.some((a) => a.action === OwnershipAction.Delete));
+    assert.ok(!actions.some((a) => a.action === OwnershipAction.HandOff));
+  });
+
+  it("offers a tag fix before any ownership question when the tag is missing", () => {
+    const actions = actionsFor(makeService({ cortexOwners: [] }));
+    assert.deepEqual(
+      actions.map((a) => a.action),
+      [OwnershipAction.FixTag, OwnershipAction.Keep],
+    );
+  });
+
+  it("offers one concede per team Cortex records on a dispute", () => {
+    const svc = makeService({
+      cortexOwners: ["L3-PENG-ClientPlatform", "L3-PENG-CoreUXBackend"],
+    });
+    const concedes = actionsFor(svc).filter(
+      (a) => a.action === OwnershipAction.Concede,
+    );
+    assert.deepEqual(
+      concedes.map((a) => a.targetTeam),
+      ["L3-PENG-ClientPlatform", "L3-PENG-CoreUXBackend"],
+    );
+    assert.ok(
+      actionsFor(svc).some((a) => a.action === OwnershipAction.Claim),
+      "claiming it must stay available",
+    );
+  });
+
+  it("always lets a finding be rejected", () => {
+    for (const svc of GROWTH_TEAM_SERVICES) {
+      if (verdictFor(svc) === "corroborated") continue;
+      assert.ok(
+        actionsFor(svc).some((a) => a.action === OwnershipAction.Keep),
+        `${svc.name} offers no way to reject its finding`,
+      );
+    }
+  });
+
+  it("explains every action it offers", () => {
+    for (const svc of GROWTH_TEAM_SERVICES) {
+      for (const a of actionsFor(svc)) {
+        assert.ok(a.label.length > 0, `${svc.name}: unlabelled action`);
+        assert.ok(a.rationale.length > 0, `${svc.name}: ${a.action} has no rationale`);
+      }
+    }
+  });
+
+  it("names a target on exactly the actions that transfer ownership", () => {
+    const transfers: string[] = [OwnershipAction.HandOff, OwnershipAction.Concede];
+    for (const svc of GROWTH_TEAM_SERVICES) {
+      for (const a of actionsFor(svc)) {
+        if (transfers.includes(a.action)) {
+          assert.ok(a.targetTeam, `${svc.name}: ${a.action} names no receiving team`);
+        } else {
+          assert.equal(
+            a.targetTeam,
+            undefined,
+            `${svc.name}: ${a.action} should not name a team`,
+          );
+        }
+      }
+    }
+  });
+});
+
+describe("isActionAllowed", () => {
+  it("accepts an offered action with its own target", () => {
+    const svc = makeService({
+      sheetIntent: "hand-off",
+      handoffTarget: "Cashout",
+      cortexOwners: ["L3-PENG-Activation"],
+    });
+    assert.ok(isActionAllowed(svc, OwnershipAction.HandOff, "Cashout"));
+    assert.ok(isActionAllowed(svc, OwnershipAction.Keep));
+  });
+
+  it("rejects an action the evidence does not support", () => {
+    // Nothing to decide on a corroborated service.
+    assert.ok(!isActionAllowed(makeService(), OwnershipAction.Concede, "L3-PENG-Discovery"));
+    // Deleting is only for a deprecated entry.
+    assert.ok(
+      !isActionAllowed(
+        makeService({ cortexOwners: ["L3-PENG-Discovery"] }),
+        OwnershipAction.Delete,
+      ),
+    );
+  });
+
+  it("rejects a target the finding never named", () => {
+    const svc = makeService({
+      sheetIntent: "hand-off",
+      handoffTarget: "Cashout",
+      cortexOwners: ["L3-PENG-Activation"],
+    });
+    assert.ok(!isActionAllowed(svc, OwnershipAction.HandOff, "Payments"));
+    assert.ok(
+      !isActionAllowed(svc, OwnershipAction.HandOff),
+      "a transfer with no target must not pass",
+    );
+  });
+
+  it("rejects a concede aimed at a team Cortex does not record", () => {
+    const svc = makeService({ cortexOwners: ["L3-PENG-Discovery"] });
+    assert.ok(isActionAllowed(svc, OwnershipAction.Concede, "L3-PENG-Discovery"));
+    assert.ok(!isActionAllowed(svc, OwnershipAction.Concede, "L3-PENG-Activation"));
+  });
+});
+
+describe("serviceByName", () => {
+  it("finds a catalog entry and rejects anything else", () => {
+    assert.equal(serviceByName("svc-referral")?.name, "svc-referral");
+    assert.equal(serviceByName("svc-does-not-exist"), undefined);
+    assert.equal(serviceByName(""), undefined);
   });
 });
 

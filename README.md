@@ -237,6 +237,51 @@ Tests assert structure and the derivation rules, never who owns what — ownersh
 is external, moving truth, and pinning it in tests means every correction has to
 fight the suite.
 
+### Acting on a finding
+
+Each service on `/services` carries the actions its verdict supports, derived by
+`actionsFor()` so a button can never contradict the finding above it: a
+`hand-off` names the team the inventory chose, a dispute offers *claim* or
+*concede* to each team Cortex records, a dead tag offers a fix, and everything
+offers **Keep in scope** — a wrong verdict must always have an exit.
+
+**A decision is a record, not an execution.** The authoritative owner lives in
+Cortex's `owningTeamTags` and this app has no Cortex write client, so pressing a
+button stores who decided what and when; the retag and the receiving team's
+ticket stay manual. What the record buys is that the same 37 findings stop being
+re-litigated every handoff, and — because `prisma/oncall.db` is committed — the
+decisions travel with the repo like the rest of the dashboard's memory.
+
+Three properties worth knowing:
+
+- **Append-only.** Undo sets `revokedAt` instead of deleting, so the trail
+  survives. The live decision is the newest unrevoked row per service.
+- **Re-validated server-side.** `recordOwnershipDecisionAction` re-derives the
+  allowed actions and rejects anything else, so a stale page cannot record a
+  concede to a team Cortex never named.
+- **Verdict-stamped.** Each row keeps the verdict it answered. If a catalog
+  correction changes that verdict later, the row is flagged rather than silently
+  repurposed.
+
+Deciding produces a hand-off packet — verdict, both sources, and every monitor
+with its id and Datadog link — so the receiving team inherits the evidence along
+with the pager. Set `JIRA_HANDOFF_PROJECT_ID` and `JIRA_HANDOFF_ISSUE_TYPE_ID`
+(numeric, read off Jira's create-issue URL) and the link opens prefilled;
+without them it opens Jira's create page next to a **Copy handoff note** button.
+
+Labels say `Decided: hand off`, never `Handed off`, and every unexecuted
+decision carries a line naming what is still outstanding. A checklist that reads
+as done while the pager still rings is worse than no checklist.
+
+### Nothing mutates without a confirmation
+
+Every write in the dashboard passes through `ConfirmDialog`, which states what
+changes and where before anything happens. This includes the local-only ones:
+"this records a decision and changes nothing in Cortex or Datadog" is precisely
+what a reader needs told, and it was the first thing anyone asked about the
+buttons. External writes get the warning styling, a destructive-coloured confirm,
+and the reminder that the receiving team should hear about it first.
+
 ### Linking monitors to services
 
 The weekly Confluence report carries monitor ids but no service column, so
