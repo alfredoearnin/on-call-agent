@@ -8,6 +8,7 @@ import { AppliedChangeStatus, TargetScope } from "@/lib/constants";
 import {
   extractHandles,
   isValidHandle,
+  isValidMonitorId,
   isValidPriority,
   rerouteMessage,
 } from "@/lib/monitor-routing";
@@ -54,6 +55,10 @@ export async function previewMonitorRoutingAction(
 ): Promise<RoutingPreview> {
   const cfg = getConfig();
   const mode = modeFor();
+
+  if (!isValidMonitorId(monitorId)) {
+    return { ok: false, mode, message: "That is not a Datadog monitor id." };
+  }
 
   let live;
   try {
@@ -152,6 +157,12 @@ export async function applyMonitorRoutingAction(
 ): Promise<RoutingResult> {
   const cfg = getConfig();
   const mode = modeFor();
+
+  // Also checked in the preview this delegates to, but the id reaches a
+  // credentialed PUT from here — the guard belongs at every entry point.
+  if (!isValidMonitorId(monitorId)) {
+    return { ok: false, message: "That is not a Datadog monitor id." };
+  }
 
   if (mode === "blocked") {
     return {

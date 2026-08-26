@@ -36,6 +36,19 @@ export function isValidHandle(candidate: string): boolean {
   return HANDLE_EXACT.test(candidate);
 }
 
+/**
+ * A Datadog monitor id, which is always a positive integer.
+ *
+ * The id is interpolated into the request path, and `fetch` resolves dot
+ * segments before sending, so `../../../api/v2/team` would aim a PUT carrying
+ * the write key at an endpoint nobody chose. The id arrives from a server
+ * action, meaning any caller that can reach the origin can set it — so it is
+ * checked against the grammar rather than assumed well-formed.
+ */
+export function isValidMonitorId(id: string): boolean {
+  return /^[1-9][0-9]{0,19}$/.test(id);
+}
+
 /** Distinct handles in a monitor message, in the order they appear. */
 export function extractHandles(message: string): string[] {
   const seen = new Set<string>();

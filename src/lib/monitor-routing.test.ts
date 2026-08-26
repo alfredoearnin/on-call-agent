@@ -3,9 +3,41 @@ import { describe, it } from "node:test";
 import {
   extractHandles,
   isValidHandle,
+  isValidMonitorId,
   isValidPriority,
   rerouteMessage,
 } from "@/lib/monitor-routing";
+
+describe("isValidMonitorId", () => {
+  it("accepts a Datadog monitor id", () => {
+    for (const id of ["1", "309355473", "9".repeat(20)]) {
+      assert.ok(isValidMonitorId(id), `${id} should be valid`);
+    }
+  });
+
+  it("rejects anything that could steer the request path", () => {
+    // `fetch` resolves dot segments, so these would aim a credentialed request
+    // at an endpoint the caller picked rather than at a monitor.
+    for (const id of [
+      "../../../api/v2/team",
+      "..%2f..%2fapi%2fv2%2fteam",
+      "123?include=all",
+      "123/downtimes",
+      "123#frag",
+      "",
+      " 123",
+      "123 ",
+      "0",
+      "01",
+      "-1",
+      "1e3",
+      "abc",
+      "9".repeat(21),
+    ]) {
+      assert.ok(!isValidMonitorId(id), `${JSON.stringify(id)} should be invalid`);
+    }
+  });
+});
 
 describe("isValidHandle", () => {
   it("accepts the handle shapes Datadog routes on", () => {
