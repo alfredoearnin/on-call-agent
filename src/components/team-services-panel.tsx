@@ -1,25 +1,39 @@
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
-  GROWTH_TEAM_SERVICES,
-  CORTEX_OWNERSHIP_TRIAGE_URL,
-  GROWTH_SERVICES_CANVAS_URL,
-  groupServicesByDomain,
-  summarizeOwnership,
+  OWNERSHIP_INVENTORY_URL,
+  OWNERSHIP_REVIEWED_ON,
+  VERDICT_LABELS,
+  datadogMonitorSearchUrl,
   datadogServiceUrl,
+  dropReasonFor,
+  groupServicesByDomain,
+  onCallScope,
+  verdictFor,
+  type OwnershipVerdict,
   type TeamService,
 } from "@/lib/team-services";
 import { getConfig } from "@/lib/config";
+import { priorityTone } from "@/lib/format";
+import type { ServiceMonitorRef } from "@/lib/queries";
 
-type Layout = "page" | "card";
+const VERDICT_TONE: Record<OwnershipVerdict, string> = {
+  corroborated: "ok",
+  disputed: "warn",
+  unsupported: "alert",
+};
 
-export function TeamServicesPanel({ layout = "page" }: { layout?: Layout }) {
+export function TeamServicesPanel({
+  monitors = {},
+}: {
+  monitors?: Record<string, ServiceMonitorRef[]>;
+}) {
   const cfg = getConfig();
-  const groups = groupServicesByDomain(GROWTH_TEAM_SERVICES);
-  const summary = summarizeOwnership(GROWTH_TEAM_SERVICES);
+  const groups = groupServicesByDomain(onCallScope());
 
-  if (layout === "page") {
-    return (
+  return (
+    <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {groups.map(({ domain, label, services }) => (
           <Card key={domain}>
@@ -30,122 +44,190 @@ export function TeamServicesPanel({ layout = "page" }: { layout?: Layout }) {
               </div>
             </CardHeader>
             <CardContent>
-              <ul className="space-y-2">
+              <ul className="space-y-2.5">
                 {services.map((svc) => (
-                  <ServiceRow key={svc.name} service={svc} site={cfg.datadog.site} />
+                  <ServiceRow
+                    key={svc.name}
+                    service={svc}
+                    site={cfg.datadog.site}
+                    monitors={monitors[svc.name] ?? []}
+                  />
                 ))}
               </ul>
             </CardContent>
           </Card>
         ))}
+      </div>
 
-        <Card className="xl:col-span-2">
-          <CardContent className="pt-4 text-xs text-muted-foreground">
-            <p>
-              Each service links to its Datadog APM entity (prod). Ownership
-              sources: Cortex catalog, Confluence ownership triage, and monitors
-              tagged <code className="rounded bg-muted px-1">{cfg.team.tag}</code>.
-            </p>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-              <a
-                href={GROWTH_SERVICES_CANVAS_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline"
-              >
-                Growth audit canvas ↗
-              </a>
-              <a
-                href={CORTEX_OWNERSHIP_TRIAGE_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline"
-              >
-                Cortex ownership triage ↗
-              </a>
-              <a
-                href={`https://app.${cfg.datadog.site}/monitors/manage?q=tag%3A${encodeURIComponent(cfg.team.tag)}`}
-                target="_blank"
-                rel="noreferrer"
-                className="text-primary hover:underline"
-              >
-                Datadog monitors ({cfg.team.tag}) ↗
-              </a>
+      <Card>
+        <CardContent className="pt-4 text-xs leading-relaxed text-muted-foreground">
+          <p>
+            Ownership reconciled {OWNERSHIP_REVIEWED_ON} across three sources:
+            the team&apos;s ownership inventory (intent), the Cortex catalog
+            (recorded owner), and monitors tagged{" "}
+            <code className="rounded bg-muted px-1">{cfg.team.tag}</code> in
+            Datadog (what actually pages). Service names link to the Datadog APM
+            entity; each monitor links to its own page by id.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+            <a
+              href={OWNERSHIP_INVENTORY_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary hover:underline"
+            >
+              Growth Ownership Inventory ↗
+            </a>
+            <a
+              href={`https://app.${cfg.datadog.site}/monitors/manage?q=tag%3A${encodeURIComponent(cfg.team.tag)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary hover:underline"
+            >
+              Datadog monitors ({cfg.team.tag}) ↗
+            </a>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+export function ServiceRow({
+  service,
+  site,
+  monitors,
+}: {
+  service: TeamService;
+  site: string;
+  monitors: ServiceMonitorRef[];
+}) {
+  const display = service.label ?? service.name;
+  const verdict = verdictFor(service);
+  const reason = dropReasonFor(service);
+  const foreignOwners = service.cortexOwners.filter(
+    (tag) => !tag.endsWith("-Growth"),
+  );
+
+
+  return (
+    <li className="rounded-md px-1 py-1 hover:bg-muted/40">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <a
+            href={datadogServiceUrl(service.name, site)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-sm text-primary hover:underline"
+            title={`${service.name} — Datadog APM`}
+          >
+            {display}
+          </a>
+          {service.label && (
+            <div className="truncate font-mono text-[11px] text-muted-foreground">
+              {service.name}
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-0.5">
+          <Badge tone={VERDICT_TONE[verdict]}>{VERDICT_LABELS[verdict]}</Badge>
+          {service.cortexOwners.length > 0 ? (
+            <span className="text-right text-[10px] text-muted-foreground">
+              {service.cortexOwners.join(", ")}
+            </span>
+          ) : (
+            <span className="text-[10px] text-alert">not in Cortex</span>
+          )}
+        </div>
+      </div>
+
+      {verdict === "disputed" && foreignOwners.length > 0 && (
+        <p className="mt-1 text-[11px] leading-snug text-warn">
+          Team claims it; Cortex records {foreignOwners.join(" and ")}.
+        </p>
+      )}
+      {reason === "handed-off" && service.handoffTarget && (
+        <p className="mt-1 text-[11px] leading-snug text-alert">
+          Already handed off to {service.handoffTarget}.
+        </p>
+      )}
+      {service.note && (
+        <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+          {service.note}
+        </p>
+      )}
+
+      <MonitorLinks service={service} site={site} monitors={monitors} />
+    </li>
+  );
+}
+
+/**
+ * Every monitor gets its id as a link so it can be opened directly.
+ *
+ * The chip goes to this dashboard's monitor page (fire history, config
+ * snapshots, applied changes); the arrow goes straight to Datadog. When no
+ * monitor has been ingested for the service we show a scoped Datadog search
+ * instead of a zero, because the Confluence ingest carries monitor ids without
+ * a service column — absence here is missing data, not missing coverage.
+ */
+function MonitorLinks({
+  service,
+  site,
+  monitors,
+}: {
+  service: TeamService;
+  site: string;
+  monitors: ServiceMonitorRef[];
+}) {
+  if (monitors.length === 0) {
+    return (
+      <div className="mt-1.5">
+        <a
+          href={datadogMonitorSearchUrl(service.name, site)}
+          target="_blank"
+          rel="noreferrer"
+          className="text-[11px] text-muted-foreground hover:text-primary hover:underline"
+        >
+          Find monitors in Datadog ↗
+        </a>
       </div>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle>Team services</CardTitle>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {summary.confirmed} confirmed · {summary.review} need ownership review
-          </p>
-        </div>
-        <Badge tone={summary.review > 0 ? "warn" : "ok"}>
-          {summary.total} services
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {groups.map(({ label, services }) => (
-          <div key={label}>
-            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {label}
-            </h3>
-            <ul className="space-y-1">
-              {services.map((svc) => (
-                <ServiceRow key={svc.name} service={svc} site={cfg.datadog.site} />
-              ))}
-            </ul>
-          </div>
-        ))}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ServiceRow({ service, site }: { service: TeamService; site: string }) {
-  const display = service.label ?? service.name;
-  const href = datadogServiceUrl(service.name, site);
-
-  return (
-    <li className="flex items-start justify-between gap-2 rounded-md px-1 py-0.5 hover:bg-muted/40">
-      <div className="min-w-0">
-        <a
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          className="text-sm text-primary hover:underline"
-          title={service.name}
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        Monitors
+      </span>
+      {monitors.map((m) => (
+        <span
+          key={m.id}
+          className="inline-flex items-center overflow-hidden rounded border border-border"
         >
-          {display}
-        </a>
-        {service.label && (
-          <div className="truncate text-[11px] text-muted-foreground">
-            {service.name}
-          </div>
-        )}
-        {service.reviewNote && (
-          <p className="mt-0.5 text-[11px] leading-snug text-warn">
-            {service.reviewNote}
-          </p>
-        )}
-      </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5">
-        <Badge tone={service.ownership === "confirmed" ? "ok" : "warn"}>
-          {service.ownership === "confirmed" ? "confirmed" : "review"}
-        </Badge>
-        {service.cortexOwner && (
-          <span className="text-[10px] text-muted-foreground">
-            {service.cortexOwner}
-          </span>
-        )}
-      </div>
-    </li>
+          <Link
+            href={`/monitors/${m.id}`}
+            title={`${m.name} — ${m.currentState}${m.alertCount > 0 ? `, ${m.alertCount} fires` : ""}`}
+            className="px-1.5 py-0.5 font-mono text-[10px] hover:bg-muted"
+          >
+            {m.id}
+          </Link>
+          <Badge tone={priorityTone(m.priority)} className="rounded-none border-0 px-1 py-0 text-[9px]">
+            {m.priority}
+          </Badge>
+          {m.datadogUrl && (
+            <a
+              href={m.datadogUrl}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open monitor ${m.id} in Datadog`}
+              className="border-l border-border px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-primary"
+            >
+              ↗
+            </a>
+          )}
+        </span>
+      ))}
+    </div>
   );
 }

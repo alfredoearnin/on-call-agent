@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
   GROWTH_TEAM_SERVICES,
+  onCallScope,
   summarizeOwnership,
 } from "@/lib/team-services";
 import {
@@ -59,6 +60,7 @@ export default async function OverviewPage() {
   );
   const topRecs = recs.slice(0, 3);
   const serviceSummary = summarizeOwnership(GROWTH_TEAM_SERVICES);
+  const serviceScope = onCallScope();
 
   return (
     <div className="space-y-6">
@@ -181,19 +183,30 @@ export default async function OverviewPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Team services</CardTitle>
+              <CardTitle>Service ownership</CardTitle>
             </CardHeader>
             <CardContent className="text-sm">
-              <div className="text-2xl font-semibold">{serviceSummary.total}</div>
+              <div className="text-2xl font-semibold">{serviceScope.length}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {serviceSummary.confirmed} confirmed · {serviceSummary.review} need
-                review
+                in on-call scope · {serviceSummary.corroborated} confirmed in
+                Cortex
               </div>
+              {serviceSummary.unsupported > 0 && (
+                <div className="mt-2 text-xs text-alert">
+                  {serviceSummary.unsupported} should leave the rotation
+                </div>
+              )}
+              {serviceSummary.disputed > 0 && (
+                <div className="mt-1 text-xs text-warn">
+                  {serviceSummary.disputed} boundaries unresolved with{" "}
+                  {serviceSummary.counterparties.length} teams
+                </div>
+              )}
               <Link
                 href="/services"
                 className="mt-3 inline-block text-primary hover:underline"
               >
-                View full catalog →
+                Ownership findings →
               </Link>
             </CardContent>
           </Card>

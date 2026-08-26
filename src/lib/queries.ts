@@ -294,6 +294,53 @@ export async function getMonitorDetail(id: string) {
   });
 }
 
+export interface ServiceMonitorRef {
+  id: string;
+  name: string;
+  priority: string;
+  currentState: string;
+  datadogUrl: string | null;
+  alertCount: number;
+}
+
+/**
+ * Monitors grouped by the service tag they watch, keyed by service name.
+ *
+ * Only the `demo` and `live` ingests populate `Monitor.service`: the Confluence
+ * parser builds monitors from the weekly report's tables, which carry a monitor
+ * id but no service column. So a service with no entry here means "we have not
+ * ingested a monitor for it", NOT "it has no monitors" — the ownership view
+ * falls back to a Datadog monitor search per service rather than rendering a
+ * zero that would read as coverage.
+ */
+export async function getServiceMonitors(
+  serviceNames: string[],
+): Promise<Record<string, ServiceMonitorRef[]>> {
+  if (serviceNames.length === 0) return {};
+
+  const monitors = await prisma.monitor.findMany({
+    where: { service: { in: serviceNames } },
+    orderBy: [{ priority: "asc" }, { name: "asc" }],
+    include: { _count: { select: { alerts: true } } },
+  });
+
+  const byService: Record<string, ServiceMonitorRef[]> = {};
+  for (const m of monitors) {
+    if (!m.service) continue;
+    const list = byService[m.service] ?? [];
+    list.push({
+      id: m.id,
+      name: m.name,
+      priority: m.priority,
+      currentState: m.currentState,
+      datadogUrl: m.datadogUrl,
+      alertCount: m._count.alerts,
+    });
+    byService[m.service] = list;
+  }
+  return byService;
+}
+
 export async function getProductionIncidents(runWindowStart?: Date) {
   return prisma.incident.findMany({
     where: {

@@ -1,13 +1,21 @@
 /**
- * Growth Team service ownership catalog.
+ * Growth Team service ownership, reconciled across three sources on 2026-08-25.
  *
- * Sources (2026-08-25 audit):
- * - Cortex catalog (L2/L3-PENG-Growth) — Confluence "Cortex Ownership Triage"
- * - Datadog monitors tagged team:l2-peng-growth
- * - Cursor canvas audit: https://cursor.com/dashboard/shared-canvases?shareId=canvas-nfAGiEJRhdQkoJbdBk5vRJBd
+ * The three sources disagree, and the disagreement is the point:
+ *
+ * 1. Sheet   — "Growth Ownership Inventory", the team's own intent per service
+ *              (Keep / Hand-off / Deprecate). This is what Growth *believes* it owns.
+ *              https://docs.google.com/spreadsheets/d/1q3hTz3fO3SXSiPvy-255mCtvGqg9eQ5VkR-5w6RFC00
+ * 2. Cortex  — `owningTeamTags` read live from the catalog. This is what the org
+ *              *records*, and it drives paging and escalation.
+ * 3. Datadog — monitors tagged to the team, which is what actually wakes someone up.
+ *
+ * An earlier version of this file collapsed 1 and 2 into a single `cortexOwner`
+ * field asserting "L2-PENG-Growth" on nearly every entry. Cortex attributes only
+ * eight services to Growth in total, so most of those assertions named a tag that
+ * does not exist. Intent and record are separate facts and are stored separately
+ * here; `verdictFor()` derives the disagreement instead of hardcoding a winner.
  */
-
-export type ServiceOwnership = "confirmed" | "review";
 
 export type ServiceDomain =
   | "referrals"
@@ -18,9 +26,35 @@ export type ServiceDomain =
   | "cashout"
   | "address-book"
   | "payroll"
+  | "earnings"
+  | "max-boost"
+  | "links"
   | "frontend"
+  | "marketing"
   | "ai-ops"
-  | "other";
+  | "tooling";
+
+/** What the Growth Ownership Inventory sheet says the team intends to do with it. */
+export type SheetIntent = "keep" | "hand-off" | "deprecate" | "not-listed";
+
+export type OwnershipVerdict =
+  /** Sheet claims it and Cortex agrees Growth is an owner. */
+  | "corroborated"
+  /** Sheet claims it, Cortex attributes it to another team. A boundary decision. */
+  | "disputed"
+  /** No defensible basis for keeping it in the on-call scope. */
+  | "unsupported";
+
+/** Why an unsupported entry should leave the on-call scope. */
+export type DropReason =
+  /** The team already agreed to hand it to another team. */
+  | "handed-off"
+  /** Slated for deletion, not transfer. */
+  | "deprecated"
+  /** The tag does not exist in Cortex — it cannot be owned or paged by name. */
+  | "unknown-tag"
+  /** Cortex names another team and the sheet never claimed it. */
+  | "other-team";
 
 export interface TeamService {
   /** Datadog / Cortex service tag. */
@@ -28,12 +62,21 @@ export interface TeamService {
   /** Human-friendly label when the tag alone is opaque. */
   label?: string;
   domain: ServiceDomain;
-  /** Cortex owner tag when known. */
-  cortexOwner?: "L2-PENG-Growth" | "L3-PENG-Growth";
-  ownership: ServiceOwnership;
-  /** Why ownership is flagged for review (only when ownership === "review"). */
-  reviewNote?: string;
+  /** The team's own position, from the ownership inventory sheet. */
+  sheetIntent: SheetIntent;
+  /** Team the sheet names as the hand-off target (only when intent is "hand-off"). */
+  handoffTarget?: string;
+  /**
+   * Cortex `owningTeamTags`, verified 2026-08-25.
+   * An empty array means the tag was not found in the Cortex catalog at all.
+   */
+  cortexOwners: string[];
+  /** Evidence or context for the verdict. Shown verbatim in the dashboard. */
+  note?: string;
 }
+
+/** Owner tags that count as Growth for the purpose of on-call scope. */
+const GROWTH_OWNER_TAGS = ["L2-PENG-Growth", "L3-PENG-Growth"];
 
 /** Link to the Cursor canvas used for the Growth service audit. */
 export const GROWTH_SERVICES_CANVAS_URL =
@@ -43,309 +86,541 @@ export const GROWTH_SERVICES_CANVAS_URL =
 export const CORTEX_OWNERSHIP_TRIAGE_URL =
   "https://earnin.atlassian.net/wiki/spaces/GROW/pages/5058101368";
 
+/** The team-maintained ownership inventory that supplies `sheetIntent`. */
+export const OWNERSHIP_INVENTORY_URL =
+  "https://docs.google.com/spreadsheets/d/1q3hTz3fO3SXSiPvy-255mCtvGqg9eQ5VkR-5w6RFC00/edit?gid=937708550#gid=937708550";
+
+/** When the three sources were last reconciled. */
+export const OWNERSHIP_REVIEWED_ON = "2026-08-25";
+
 const DOMAIN_LABELS: Record<ServiceDomain, string> = {
   referrals: "Referrals",
   notifications: "Notifications",
   "conversational-onboarding": "Conversational onboarding",
-  activation: "Activation / first mile",
+  activation: "Activation / user lifecycle",
   postman: "Postman (messaging)",
-  cashout: "Cashout / funnel",
+  cashout: "Cashout funnel",
   "address-book": "Address book",
-  payroll: "Payroll provider",
+  payroll: "Payroll / neobank",
+  earnings: "Earnings",
+  "max-boost": "Max Boost (DCM)",
+  links: "Short links",
   frontend: "Frontend",
+  marketing: "Marketing web & SEO",
   "ai-ops": "Growth AI ops",
-  other: "Other",
+  tooling: "Growth tooling",
 };
 
+const DOMAIN_ORDER: ServiceDomain[] = [
+  "referrals",
+  "conversational-onboarding",
+  "notifications",
+  "marketing",
+  "ai-ops",
+  "tooling",
+  "max-boost",
+  "address-book",
+  "postman",
+  "links",
+  "frontend",
+  "activation",
+  "cashout",
+  "payroll",
+  "earnings",
+];
+
 /**
- * Canonical list of services that correspond to the Growth Team on-call scope.
- * Sorted by domain, then name.
+ * Every service the on-call scope has ever claimed, with the evidence for and
+ * against. Nothing is silently dropped: entries that should leave the rotation
+ * stay here carrying their reason, so the dashboard can show what was removed
+ * and why rather than quietly shrinking.
  */
 export const GROWTH_TEAM_SERVICES: TeamService[] = [
-  // ── Confirmed Growth (Cortex) ─────────────────────────────────────────────
+  // ── Cortex agrees Growth is an owner ──────────────────────────────────────
   {
     name: "svc-referral",
     label: "Referrals API",
     domain: "referrals",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
-  },
-  {
-    name: "svc-referral-user-signup-processor",
-    domain: "referrals",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
-  },
-  {
-    name: "svc-referral-user-employer-updates-processor",
-    domain: "referrals",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
-  },
-  {
-    name: "svc-referral-cashout-processor",
-    domain: "referrals",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
-  },
-  {
-    name: "svc-referral-user-started-tys-account-processor",
-    domain: "referrals",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L2-PENG-Growth", "L3-PENG-Discovery"],
+    note: "Core referral API, co-owned with Discovery in Cortex.",
   },
   {
     name: "svc-notification-preferences",
     label: "Notification preferences",
     domain: "notifications",
-    cortexOwner: "L3-PENG-Growth",
-    ownership: "confirmed",
-  },
-  {
-    name: "svc-event-reporting-sqs-processor",
-    label: "Event reporting (Segment)",
-    domain: "notifications",
-    cortexOwner: "L3-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Growth"],
+    note: "Sole Growth owner in Cortex.",
   },
   {
     name: "svc-conversational-onboarding",
     label: "Conversational onboarding",
     domain: "conversational-onboarding",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: [
+      "L2-PENG-Growth",
+      "L3-PENG-Growth",
+      "L3-PENG-Activation",
+      "L3-PENG-Discovery",
+    ],
+    note: "Four owning teams in Cortex — clarify who takes the page.",
   },
   {
     name: "svc-growth-ai-ops",
     label: "Growth AI operations",
     domain: "ai-ops",
-    cortexOwner: "L3-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Growth", "L3-PENG-Discovery"],
+    note: "Conversation grading feedback loop.",
   },
   {
-    name: "usl-prime-frontend",
-    label: "USL Prime frontend",
-    domain: "frontend",
-    cortexOwner: "L3-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-mark-tech",
+    label: "Marketing tech",
+    domain: "marketing",
+    sheetIntent: "keep",
+    cortexOwners: ["L2-PENG-Growth"],
+    note: "Sole Growth owner in Cortex. A previous review flag guessed Web Platform; both the sheet and Cortex contradict it.",
+  },
+  {
+    name: "cronjob-mark-tech-crons",
+    label: "Marketing tech crons",
+    domain: "marketing",
+    sheetIntent: "keep",
+    cortexOwners: ["L2-PENG-Growth"],
+    note: "Sole Growth owner in Cortex, tier:1. Separately, its P5 monitor over-routes to incident.io High.",
+  },
+  {
+    name: "seo-agents-tool",
+    label: "SEO agents tool",
+    domain: "marketing",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Growth"],
+    note: "Sole Growth owner in Cortex. Was missing from the catalog entirely.",
+  },
+  {
+    name: "svc-growth-spring-internal-tools",
+    label: "Growth internal tools backend",
+    domain: "tooling",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Growth"],
+    note: "Sole Growth owner in Cortex. Was missing from the catalog entirely.",
   },
 
-  // ── Confirmed Growth (Cortex kmono jobs) ──────────────────────────────────
+  // ── Sheet claims it, Cortex names another team ────────────────────────────
   {
-    name: "job-cashout-user-cashout-status-processor",
-    label: "Funnel cashout status",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-user-signup-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "job-cashout-attempt-restore-event-processor",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-user-employer-updates-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "job-cashout-recovery-message-events-processor",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-cashout-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "job-cashout-cashout-collected-events-processor",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-user-started-tys-account-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "cronjob-cashout-retrigger-funnel-cashout",
-    label: "Retrigger funnel cashout cron",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-earlypay-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "Sheet keeps it; was missing from the catalog while four sibling processors were listed.",
   },
   {
-    name: "job-postman-send-message-processor",
-    domain: "postman",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-referral-product-enrollment-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "Sheet keeps it; was missing from the catalog.",
+  },
+  {
+    name: "svc-referral-trusted-earner-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "tier:1. Sheet keeps it; was missing from the catalog.",
+  },
+  {
+    name: "svc-referral-workhub-migration-processor",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "Sheet keeps it; was missing from the catalog.",
   },
   {
     name: "service-postman-internal",
     label: "Postman internal (gRPC)",
     domain: "postman",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "tier:1. Growth owns the six SQS queues behind this service but not the service itself — a queue backlog pages Growth, a code bug belongs to Activation.",
   },
   {
-    name: "service-postman",
+    name: "job-postman-send-message-processor",
     domain: "postman",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "Its send-message queues and DLQs are tagged L3-PENG-Growth across three AWS accounts.",
+  },
+  {
+    name: "service-address-book-external",
+    label: "Address book (external API)",
+    domain: "address-book",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "The catalog previously carried the non-existent tag service-address-book.",
   },
   {
     name: "job-address-book-address-book-new-user-processor",
     domain: "address-book",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
     name: "job-address-book-backfill",
     domain: "address-book",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "service-address-book",
-    domain: "address-book",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "service-max-limit-dcm-external",
+    label: "Max Boost external API",
+    domain: "max-boost",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "tier:1, publicly exposed. The sheet answers the old review flag: Growth keeps Max Boost.",
   },
   {
-    name: "job-bank-transactions-neobank-processor",
-    domain: "cashout",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "service-max-limit-dcm-internal",
+    label: "Max Boost internal API",
+    domain: "max-boost",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
+    note: "tier:1. Sheet keeps it.",
   },
   {
-    name: "job-earnings-resource-updates-event-processor",
-    domain: "activation",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "cronjob-max-limit-dcm-grantblockeval",
+    domain: "max-boost",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "job-payroll-provider-bank-account-processor",
-    domain: "payroll",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "cronjob-max-limit-dcm-grantevaluation",
+    domain: "max-boost",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Discovery"],
   },
   {
-    name: "job-payroll-provider-payroll-provider-processor",
-    domain: "payroll",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "svc-links-internal",
+    label: "Short links",
+    domain: "links",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-ClientPlatform", "L3-PENG-CoreUXBackend"],
+    note: "tier:1. Cortex backs the Confluence triage over the sheet here — the short-links DynamoDB tables were flagged to move to CoreUXBackend for this reason.",
   },
   {
-    name: "job-payroll-provider-processor",
-    domain: "payroll",
-    cortexOwner: "L2-PENG-Growth",
-    ownership: "confirmed",
+    name: "usl-prime-frontend",
+    label: "USL Prime frontend",
+    domain: "frontend",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-CoreUX"],
+    note: "Sheet keeps the funnel frontend and notes CIA owns the backend. Cortex records only CoreUX.",
   },
-
-  // ── On-call scope (Datadog team:l2-peng-growth) — ownership under review ───
   {
     name: "job-user-setup-user-first-mile-calc-processor",
     label: "First-mile calc processor",
     domain: "activation",
-    ownership: "review",
-    reviewNote:
-      "“First mile” naming overlaps CoreUX onboarding; 6 SQS queues still TBD between Growth and CoreUXBackend.",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Sheet keeps it. The catalog's old review flag conflated this job with the six SQS queues still pending between Growth and CoreUXBackend.",
+  },
+  {
+    name: "svc-earnings-sqs-one-time-granted-earnings",
+    label: "One-time granted earnings (OTGE)",
+    domain: "earnings",
+    sheetIntent: "keep",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Sheet keeps the business logic and concedes delivery to FIP. Was missing from the catalog.",
+  },
+
+  // ── No basis for keeping these in the on-call scope ───────────────────────
+  {
+    name: "job-cashout-user-cashout-status-processor",
+    label: "Funnel cashout status",
+    domain: "cashout",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+  },
+  {
+    name: "job-cashout-cashout-collected-events-processor",
+    domain: "cashout",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+  },
+  {
+    name: "job-cashout-recovery-message-events-processor",
+    domain: "cashout",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+  },
+  {
+    name: "cronjob-cashout-retrigger-funnel-cashout",
+    label: "Retrigger funnel cashout cron",
+    domain: "cashout",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+  },
+  {
+    name: "job-cashout-attempt-restore-event-processor",
+    domain: "cashout",
+    sheetIntent: "deprecate",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "2023 Chime Smart Restore experiment. Cortex's own description says it should be deprecated.",
   },
   {
     name: "job-user-user-activation-processor",
     label: "User activation processor",
     domain: "activation",
-    ownership: "review",
-    reviewNote:
-      "Activation-adjacent; dev-cluster OOM pages prod Growth on-call (monitor routing leak).",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Separately: dev-cluster OOM pages prod Growth on-call, which is a monitor routing leak to fix regardless of ownership.",
   },
   {
-    name: "job-deactivated-user-processor",
+    name: "job-user-deactivated-user-processor",
     domain: "activation",
-    ownership: "review",
-    reviewNote: "Deactivation flow; confirm Growth vs Activation team boundary.",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "The catalog previously carried this as job-deactivated-user-processor, which is not a real tag.",
   },
   {
-    name: "job-deactivated-user-cashout-status",
+    name: "job-user-deactivated-user-cashout-status",
     domain: "activation",
-    ownership: "review",
-    reviewNote: "Deactivation + cashout; confirm Growth vs Activation team boundary.",
+    sheetIntent: "hand-off",
+    handoffTarget: "Cashout",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "The catalog previously carried this as job-deactivated-user-cashout-status, which is not a real tag.",
   },
   {
-    name: "svc-mark-tech",
-    label: "Mark-tech service",
-    domain: "other",
-    ownership: "review",
-    reviewNote:
-      "Baseline monitors tagged team:l2-peng-growth but service may belong to Web Platform — confirm Cortex owner.",
+    name: "job-bank-transactions-neobank-processor",
+    domain: "payroll",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: ["L3-PENG-Activation"],
   },
   {
-    name: "cronjob-mark-tech-crons",
-    domain: "other",
-    ownership: "review",
-    reviewNote: "P5 cron monitor over-routed to incident.io High; Growth ownership unconfirmed.",
+    name: "job-payroll-provider-payroll-provider-processor",
+    domain: "payroll",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: ["L3-PENG-Activation"],
   },
   {
-    name: "service-max-limit-dcm-external",
-    label: "Max-limit DCM external",
-    domain: "other",
-    ownership: "review",
-    reviewNote: "DCM domain; tagged to Growth in Datadog — verify Cortex owner (may be DCM team).",
+    name: "job-earnings-resource-updates-event-processor",
+    domain: "earnings",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Added by Growth in Q1'23; the sheet says Earnings should own it.",
   },
   {
-    name: "service-max-limit-dcm-internal",
-    label: "Max-limit DCM internal",
-    domain: "other",
-    ownership: "review",
-    reviewNote: "DCM domain; tagged to Growth in Datadog — verify Cortex owner.",
+    name: "job-payroll-provider-bank-account-processor",
+    domain: "payroll",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: [],
+    note: "Not found in Cortex under this tag, and the sheet already hands it off.",
   },
   {
-    name: "cronjob-max-limit-dcm-grantblockeval",
-    domain: "other",
-    ownership: "review",
-    reviewNote: "DCM cron; tagged to Growth in Datadog — verify Cortex owner.",
+    name: "job-payroll-provider-processor",
+    domain: "payroll",
+    sheetIntent: "not-listed",
+    cortexOwners: [],
+    note: "Not a real service tag — likely a truncation of the payroll-provider processor above.",
   },
   {
-    name: "cronjob-max-limit-dcm-grantevaluation",
-    domain: "other",
-    ownership: "review",
-    reviewNote: "DCM cron; tagged to Growth in Datadog — verify Cortex owner.",
+    name: "service-postman",
+    domain: "postman",
+    sheetIntent: "not-listed",
+    cortexOwners: [],
+    note: "Not a real service tag — duplicate of service-postman-internal.",
+  },
+  {
+    name: "svc-referral-reprocess-cron-job",
+    domain: "referrals",
+    sheetIntent: "keep",
+    cortexOwners: [],
+    note: "The sheet keeps it but the tag resolves to nothing in Cortex. Needs a real tag before it can be owned or paged.",
+  },
+  {
+    name: "svc-event-reporting-sqs-processor",
+    label: "Event reporting (Segment)",
+    domain: "notifications",
+    sheetIntent: "not-listed",
+    cortexOwners: ["L3-FIP-EventDeliveryExp"],
+    note: "tier:1, owned by FIP. Absent from the sheet — no source supports a Growth claim.",
   },
 ];
+
+/** True when Cortex records a Growth team among the owners. */
+export function isGrowthOwnedInCortex(service: TeamService): boolean {
+  return service.cortexOwners.some((tag) => GROWTH_OWNER_TAGS.includes(tag));
+}
+
+/**
+ * Derive the verdict from the evidence rather than storing it.
+ *
+ * Order matters: a tag that does not exist in Cortex cannot be owned or paged
+ * by name, so that finding outranks whatever the sheet intends for it.
+ */
+export function verdictFor(service: TeamService): OwnershipVerdict {
+  if (service.cortexOwners.length === 0) return "unsupported";
+  if (service.sheetIntent === "deprecate" || service.sheetIntent === "hand-off") {
+    return "unsupported";
+  }
+  if (service.sheetIntent === "not-listed" && !isGrowthOwnedInCortex(service)) {
+    return "unsupported";
+  }
+  return isGrowthOwnedInCortex(service) ? "corroborated" : "disputed";
+}
+
+/** Why an unsupported entry should leave the scope. Undefined for everything else. */
+export function dropReasonFor(service: TeamService): DropReason | undefined {
+  if (verdictFor(service) !== "unsupported") return undefined;
+  if (service.cortexOwners.length === 0) return "unknown-tag";
+  if (service.sheetIntent === "deprecate") return "deprecated";
+  if (service.sheetIntent === "hand-off") return "handed-off";
+  return "other-team";
+}
+
+export const DROP_REASON_LABELS: Record<DropReason, string> = {
+  "handed-off": "Already handed off",
+  deprecated: "Slated for deletion",
+  "unknown-tag": "Tag does not exist",
+  "other-team": "Owned by another team",
+};
+
+export const VERDICT_LABELS: Record<OwnershipVerdict, string> = {
+  corroborated: "Confirmed",
+  disputed: "Disputed",
+  unsupported: "Drop",
+};
 
 export function domainLabel(domain: ServiceDomain): string {
   return DOMAIN_LABELS[domain];
 }
 
+/**
+ * Services the team could plausibly be paged for: Cortex agrees, or the team
+ * still claims it and the boundary is unresolved.
+ */
+export function onCallScope(
+  services: TeamService[] = GROWTH_TEAM_SERVICES,
+): TeamService[] {
+  return services.filter((s) => verdictFor(s) !== "unsupported");
+}
+
+/** Entries that should leave the rotation, with the reason preserved. */
+export function dropList(
+  services: TeamService[] = GROWTH_TEAM_SERVICES,
+): TeamService[] {
+  return services.filter((s) => verdictFor(s) === "unsupported");
+}
+
+export function servicesByVerdict(
+  verdict: OwnershipVerdict,
+  services: TeamService[] = GROWTH_TEAM_SERVICES,
+): TeamService[] {
+  return services.filter((s) => verdictFor(s) === verdict);
+}
+
 export function groupServicesByDomain(
   services: TeamService[],
 ): { domain: ServiceDomain; label: string; services: TeamService[] }[] {
-  const order: ServiceDomain[] = [
-    "referrals",
-    "notifications",
-    "conversational-onboarding",
-    "activation",
-    "cashout",
-    "postman",
-    "address-book",
-    "payroll",
-    "frontend",
-    "ai-ops",
-    "other",
-  ];
   const byDomain = new Map<ServiceDomain, TeamService[]>();
   for (const svc of services) {
     const list = byDomain.get(svc.domain) ?? [];
     list.push(svc);
     byDomain.set(svc.domain, list);
   }
-  return order
-    .filter((d) => byDomain.has(d))
-    .map((domain) => ({
-      domain,
-      label: DOMAIN_LABELS[domain],
-      services: (byDomain.get(domain) ?? []).sort((a, b) =>
-        a.name.localeCompare(b.name),
-      ),
-    }));
+  return DOMAIN_ORDER.filter((d) => byDomain.has(d)).map((domain) => ({
+    domain,
+    label: DOMAIN_LABELS[domain],
+    services: (byDomain.get(domain) ?? []).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    ),
+  }));
 }
 
-export function summarizeOwnership(services: TeamService[]) {
-  const confirmed = services.filter((s) => s.ownership === "confirmed").length;
-  const review = services.filter((s) => s.ownership === "review").length;
-  return { total: services.length, confirmed, review };
+export interface OwnershipSummary {
+  total: number;
+  corroborated: number;
+  disputed: number;
+  unsupported: number;
+  /** Distinct teams named in Cortex for disputed entries. */
+  counterparties: string[];
+}
+
+export function summarizeOwnership(
+  services: TeamService[] = GROWTH_TEAM_SERVICES,
+): OwnershipSummary {
+  const counterparties = new Set<string>();
+  let corroborated = 0;
+  let disputed = 0;
+  let unsupported = 0;
+
+  for (const svc of services) {
+    const verdict = verdictFor(svc);
+    if (verdict === "corroborated") corroborated += 1;
+    if (verdict === "unsupported") unsupported += 1;
+    if (verdict === "disputed") {
+      disputed += 1;
+      for (const tag of svc.cortexOwners) {
+        if (!GROWTH_OWNER_TAGS.includes(tag)) counterparties.add(tag);
+      }
+    }
+  }
+
+  return {
+    total: services.length,
+    corroborated,
+    disputed,
+    unsupported,
+    counterparties: [...counterparties].sort(),
+  };
 }
 
 /** Datadog APM entity URL for a service (prod). */
-export function datadogServiceUrl(serviceName: string, site = "datadoghq.com"): string {
+export function datadogServiceUrl(
+  serviceName: string,
+  site = "datadoghq.com",
+): string {
   return `https://app.${site}/apm/entity/service%3A${encodeURIComponent(serviceName)}?env=prod`;
+}
+
+/** Datadog monitor list filtered to one service — the fallback when we have no
+ *  monitor rows ingested for it yet. */
+export function datadogMonitorSearchUrl(
+  serviceName: string,
+  site = "datadoghq.com",
+): string {
+  return `https://app.${site}/monitors/manage?q=${encodeURIComponent(`service:${serviceName}`)}`;
 }

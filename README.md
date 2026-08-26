@@ -193,6 +193,8 @@ cloud by the daily-refresh automation, which drops the markdown into
   **"What happened"**.
 - **Carryover** — still-firing incident.io alerts carried over from prior weeks
   (Datadog reads OK/No Data) that need a manual clear.
+- **Services** — service ownership reconciled across three disagreeing sources
+  (see below), with every monitor linked by id.
 - **Recommendations** / **Monitors** — the learned tuning recommendations and
   per-monitor detail, with the guarded Apply/Revert path.
 - **Settings** — data source + freshness, **cloud automations** (per-automation
@@ -200,6 +202,40 @@ cloud by the daily-refresh automation, which drops the markdown into
   and refresh controls.
 
 ---
+
+## Service ownership (three sources that disagree)
+
+The **Services** page answers "what are we actually on-call for", which no single
+system knows. `src/lib/team-services.ts` holds the reconciliation:
+
+| Source | Field | What it means |
+| --- | --- | --- |
+| Growth Ownership Inventory (sheet) | `sheetIntent` | What the team *intends* to own: `keep` / `hand-off` / `deprecate` / `not-listed`. |
+| Cortex catalog | `cortexOwners` | What the org *records*. Drives escalation. An empty array means the tag does not exist in Cortex at all. |
+| Datadog | `Monitor.service` | What actually pages someone. |
+
+`verdictFor()` derives the verdict from the first two rather than storing it:
+
+- **corroborated** — the sheet keeps it and Cortex names a Growth team.
+- **disputed** — the sheet keeps it, Cortex names someone else. A boundary
+  decision to settle with that team, not a bug to fix.
+- **unsupported** — already handed off, deprecated, tagged to another team with
+  no claim, or the tag resolves to nothing in Cortex.
+
+Two rules are deliberate:
+
+1. **Intent and record are separate fields.** An earlier version had one
+   `cortexOwner` field asserting `L2-PENG-Growth` on nearly every entry, while
+   Cortex records only eight services to Growth — so most of those claims named a
+   tag that does not exist. One field cannot hold both facts.
+2. **Unsupported entries stay in the file.** Deleting them would hide the
+   finding. They are excluded from `onCallScope()` but still rendered under
+   "Leave the rotation" with their reason and their live monitors, because a
+   monitor still paging us for a service we gave away is the actionable part.
+
+Tests assert structure and the derivation rules, never who owns what — ownership
+is external, moving truth, and pinning it in tests means every correction has to
+fight the suite.
 
 ## The "memory" (shared via git)
 
