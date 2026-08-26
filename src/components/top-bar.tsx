@@ -1,6 +1,10 @@
 import { CircleDot } from "lucide-react";
 import { getConfig } from "@/lib/config";
-import { getAutomationHealth, getLatestRun } from "@/lib/queries";
+import {
+  getAutomationHealth,
+  getLatestRun,
+  getSourceFreshness,
+} from "@/lib/queries";
 import { timeAgo } from "@/lib/format";
 import { healthTone, worstState } from "@/lib/automations/health";
 import { SyncNowButton } from "@/components/sync-now-button";
@@ -15,11 +19,23 @@ const DOT_CLASS: Record<string, string> = {
   neutral: "text-neutral",
 };
 
+/**
+ * A fresh source gets no colour of its own — it would compete with the health dot
+ * for attention while saying nothing the dot does not already say.
+ */
+const SOURCE_CLASS: Record<string, string> = {
+  ok: "",
+  warn: "text-warn",
+  alert: "text-alert",
+  neutral: "",
+};
+
 export async function TopBar() {
   const cfg = getConfig();
-  const [latest, health] = await Promise.all([
+  const [latest, health, source] = await Promise.all([
     getLatestRun(),
     getAutomationHealth(),
+    getSourceFreshness(),
   ]);
 
   // The dot used to be hardcoded green, so a failed 9AM automation looked healthy
@@ -46,6 +62,18 @@ export async function TopBar() {
         >
           <CircleDot className={cn("h-3 w-3", DOT_CLASS[tone])} />
           Last synced {timeAgo(latest?.startedAt)}
+          {/*
+            "Last synced" is about this checkout, not the source, and on its own it
+            reads as freshness the data does not have — see assessSourceFreshness.
+          */}
+          {source && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className={SOURCE_CLASS[source.tone]} title={source.note}>
+                {source.age ? `source ${source.age} old` : "source age unknown"}
+              </span>
+            </>
+          )}
         </div>
         <ThemeToggle />
         <SyncNowButton />

@@ -15,8 +15,10 @@ import { readGitEvidence } from "@/lib/automations/git-evidence";
 import { readPageArchive } from "@/lib/automations/page-evidence";
 import {
   assessAutomations,
+  assessSourceFreshness,
   assessWeekClose,
   type AutomationHealth,
+  type SourceFreshness,
   type WeekCloseHealth,
 } from "@/lib/automations/health";
 
@@ -420,6 +422,34 @@ export async function getAutomationHealth(
       noRun: !run,
     },
   });
+}
+
+/**
+ * How stale the page feeding the dashboard is, for the header.
+ *
+ * Reads the newest run of any status for the same reason getAutomationHealth
+ * does: after a failed run, an older row's stamp must not stand in as the latest
+ * look at the source.
+ */
+export async function getSourceFreshness(
+  now: Date = new Date(),
+): Promise<SourceFreshness | null> {
+  const cfg = getConfig();
+  if (!hasCloudAutomations(cfg)) return null;
+
+  const run = await getLatestRunAnyStatus();
+  return assessSourceFreshness(
+    {
+      refreshedAt: run?.handoffRefreshedAt ?? undefined,
+      refreshedText: run?.handoffRefreshedText ?? undefined,
+      runStartedAt: run?.startedAt,
+      runStatus: run?.status,
+      noRun: !run,
+    },
+    now,
+    cfg.team.timezone,
+    cfg.automations,
+  );
 }
 
 /**

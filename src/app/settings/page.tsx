@@ -3,6 +3,7 @@ import {
   getAutomationHealth,
   getLastAutomationTriggers,
   getRuns,
+  getSourceFreshness,
   getSourceSummary,
   getWeekClose,
 } from "@/lib/queries";
@@ -31,17 +32,31 @@ function runTone(status: string): "ok" | "warn" | "alert" | "neutral" {
   return "neutral";
 }
 
+const TONE_CLASS: Record<string, string> = {
+  ok: "",
+  warn: "text-warn",
+  alert: "text-alert",
+  neutral: "",
+};
+
 export default async function SettingsPage() {
   const cfg = getConfig();
   const now = new Date();
-  const [{ weeksIngested, latest }, runs, health, lastTriggers, weekClose] =
-    await Promise.all([
-      getSourceSummary(),
-      getRuns(15),
-      getAutomationHealth(now),
-      getLastAutomationTriggers(),
-      getWeekClose(now),
-    ]);
+  const [
+    { weeksIngested, latest },
+    runs,
+    health,
+    lastTriggers,
+    weekClose,
+    source,
+  ] = await Promise.all([
+    getSourceSummary(),
+    getRuns(15),
+    getAutomationHealth(now),
+    getLastAutomationTriggers(),
+    getWeekClose(now),
+    getSourceFreshness(now),
+  ]);
   const tz = cfg.team.timezone;
 
   // Only scalars reach the panel — never cfg, whose automations block sits beside
@@ -106,6 +121,17 @@ export default async function SettingsPage() {
                 : "—"}
             </Row>
             <Row label="Last synced">{timeAgo(latest?.startedAt)}</Row>
+            {source && (
+              <Row label="Source refreshed">
+                <span className={source.stale ? TONE_CLASS[source.tone] : ""}>
+                  {source.refreshedText ?? "unknown"}
+                  {source.age ? ` (${source.age} ago)` : ""}
+                </span>
+              </Row>
+            )}
+            {/* The two rows above disagree on purpose: one ages this checkout,
+                the other ages the page it copied. */}
+            {source && <p className="pt-1 text-xs">{source.note}</p>}
             <p className="pt-1 text-xs text-muted-foreground">
               Datadog is used <strong>only</strong> for the Apply write path — not
               as a data source. No incident.io / Jira credentials are needed here.

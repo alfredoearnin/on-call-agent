@@ -15,6 +15,7 @@ import {
 } from "@/lib/constants";
 import {
   assessAutomations,
+  assessSourceFreshness,
   assessWeekClose,
   healthTone,
   weekCloseTone,
@@ -490,7 +491,83 @@ describe("weekCloseTone", () => {
   });
 });
 
+describe("assessSourceFreshness", () => {
+  it("reads a page rewritten since the last due slot as fresh", () => {
+    const f = freshnessOf(
+      pageStamped("2026-08-20T18:00:00Z", "2026-08-20 11:00 AM PT"),
+    );
+
+    assert.equal(f.tone, "ok");
+    assert.equal(f.stale, false);
+    assert.equal(f.age, "1.0 h");
+    assert.match(f.note, /2026-08-20 11:00 AM PT/);
+  });
+
+  it("warns when the source missed the slot that already came due", () => {
+    const f = freshnessOf(
+      pageStamped("2026-08-19T22:00:00Z", "2026-08-19 3:00 PM PT"),
+    );
+
+    assert.equal(f.tone, "warn");
+    assert.equal(f.stale, true);
+    assert.equal(f.age, "21 h");
+    // The whole point of the figure: an empty week must not read as a quiet one.
+    assert.match(f.note, /not evidence of a quiet week/);
+  });
+
+  it("escalates to alert once two cycles have gone by", () => {
+    const f = freshnessOf(
+      pageStamped("2026-08-18T22:00:00Z", "2026-08-18 3:00 PM PT"),
+    );
+
+    assert.equal(f.tone, "alert");
+    assert.equal(f.stale, true);
+  });
+
+  it("counts yesterday's refresh as current until today's slot comes due", () => {
+    // Otherwise every morning before the slot would report a missed cycle — a
+    // daily false alarm, which is how a freshness figure gets ignored.
+    const f = freshnessOf(
+      pageStamped("2026-08-19T22:00:00Z", "2026-08-19 3:00 PM PT"),
+      BEFORE_DUE,
+    );
+
+    assert.equal(f.tone, "ok");
+    assert.equal(f.stale, false);
+  });
+
+  it("ages nothing when this checkout has never ingested", () => {
+    const f = freshnessOf({ noRun: true });
+
+    assert.equal(f.tone, "neutral");
+    assert.equal(f.stale, false);
+    assert.equal(f.age, undefined);
+  });
+
+  it("quotes an unresolvable stamp rather than guessing its age", () => {
+    const f = freshnessOf({ refreshedText: "last Tuesday-ish" });
+
+    assert.equal(f.tone, "warn");
+    assert.equal(f.age, undefined);
+    assert.match(f.note, /last Tuesday-ish/);
+  });
+
+  it("treats a stamp from the future as unreadable, not as fresh", () => {
+    const f = freshnessOf(
+      pageStamped("2026-08-22T19:00:00Z", "2026-08-22 12:00 PM PT"),
+    );
+
+    assert.equal(f.tone, "warn");
+    assert.equal(f.stale, false);
+    assert.equal(f.age, undefined);
+    assert.match(f.note, /in the future/);
+  });
+});
+
 // ── helpers ─────────────────────────────────────────────────────────────────
+
+const freshnessOf = (page: PageEvidence, now: Date = AFTER_DUE) =>
+  assessSourceFreshness(page, now, PT, SCHEDULE);
 
 const week = (over: Partial<ArchivedWeek> = {}): ArchivedWeek => ({
   file: "handoff-2026-08-18.md",
