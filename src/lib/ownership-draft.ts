@@ -38,6 +38,19 @@ export interface JiraDraftTarget {
   issueTypeId: string;
 }
 
+/**
+ * The Jira base with its trailing slashes trimmed, or empty if it is not https.
+ *
+ * The result lands in an `href` the operator clicks. `JIRA_BASE_URL` is
+ * operator-supplied so this is not a likely attack, but a `javascript:` or
+ * `data:` value would execute in the page rather than fail visibly — and a
+ * misconfigured base should present as a dead link, not as a hazard.
+ */
+function httpsBase(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "");
+  return /^https:\/\/[^\s]+$/i.test(trimmed) ? trimmed : "";
+}
+
 function summaryFor(
   service: TeamService,
   option: OwnershipActionOption,
@@ -149,16 +162,21 @@ export function buildHandoffDraft(input: {
 
   const summary = summaryFor(service, option);
   const body = lines.join("\n");
-  const base = jira.baseUrl.replace(/\/+$/, "");
-  const prefilled = Boolean(jira.projectId && jira.issueTypeId);
+  const base = httpsBase(jira.baseUrl);
+  const prefilled = Boolean(base && jira.projectId && jira.issueTypeId);
 
-  const jiraUrl = prefilled
-    ? `${base}/secure/CreateIssueDetails!init.jspa?pid=${encodeURIComponent(
-        jira.projectId,
-      )}&issuetype=${encodeURIComponent(
-        jira.issueTypeId,
-      )}&summary=${encodeURIComponent(summary)}&description=${encodeURIComponent(body)}`
-    : `${base}/secure/CreateIssue!default.jspa`;
+  // No usable base means no link at all rather than a relative one that would
+  // navigate inside the dashboard. The note is still copyable, which is the
+  // fallback that matters.
+  const jiraUrl = !base
+    ? ""
+    : prefilled
+      ? `${base}/secure/CreateIssueDetails!init.jspa?pid=${encodeURIComponent(
+          jira.projectId,
+        )}&issuetype=${encodeURIComponent(
+          jira.issueTypeId,
+        )}&summary=${encodeURIComponent(summary)}&description=${encodeURIComponent(body)}`
+      : `${base}/secure/CreateIssue!default.jspa`;
 
   return { summary, body, jiraUrl, prefilled };
 }

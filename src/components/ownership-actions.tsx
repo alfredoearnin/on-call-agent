@@ -143,15 +143,17 @@ export function OwnershipActions({
 
         {draft && (
           <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={draft.jiraUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              {draft.prefilled ? "Open prefilled Jira draft" : "Open Jira"}
-            </a>
+            {draft.jiraUrl && (
+              <a
+                href={draft.jiraUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
+              >
+                <ExternalLink className="h-3 w-3" />
+                {draft.prefilled ? "Open prefilled Jira draft" : "Open Jira"}
+              </a>
+            )}
             <button
               type="button"
               onClick={() => copyNote(draft.body)}
@@ -166,7 +168,9 @@ export function OwnershipActions({
             </button>
             {!draft.prefilled && (
               <span className="text-[10px] text-muted-foreground">
-                paste the note — set JIRA_HANDOFF_PROJECT_ID to prefill
+                {draft.jiraUrl
+                  ? "paste the note — set JIRA_HANDOFF_PROJECT_ID to prefill"
+                  : "paste the note — JIRA_BASE_URL must be an https URL to link"}
               </span>
             )}
           </div>

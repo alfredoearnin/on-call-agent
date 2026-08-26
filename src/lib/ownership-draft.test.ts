@@ -142,6 +142,29 @@ describe("buildHandoffDraft", () => {
     assert.ok(!draft.jiraUrl.includes(".net//"));
   });
 
+  it("emits no link when the base url is not https", () => {
+    // The url lands in an href, so a non-https base has to produce a dead
+    // control rather than something the browser will execute or resolve
+    // against the dashboard's own origin.
+    for (const baseUrl of [
+      "javascript:alert(1)//earnin.atlassian.net",
+      "data:text/html,<script>1</script>",
+      "http://earnin.atlassian.net",
+      "earnin.atlassian.net",
+      "",
+      "   ",
+    ]) {
+      const draft = draftFor(HANDED_OFF, OwnershipAction.HandOff, "Cashout", {
+        ...JIRA_CONFIGURED,
+        baseUrl,
+      });
+      assert.equal(draft.jiraUrl, "", `${JSON.stringify(baseUrl)} must not link`);
+      assert.equal(draft.prefilled, false);
+      // The note is the fallback, so it still has to be worth pasting.
+      assert.match(draft.body, /Next steps:/);
+    }
+  });
+
   it("builds a draft for every action the catalog can offer", () => {
     const svc: TeamService = {
       name: "svc-links-internal",
