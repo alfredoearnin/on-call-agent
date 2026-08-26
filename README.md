@@ -273,6 +273,30 @@ Labels say `Decided: hand off`, never `Handed off`, and every unexecuted
 decision carries a line naming what is still outstanding. A checklist that reads
 as done while the pager still rings is worse than no checklist.
 
+### Moving the pager
+
+The one remediation the dashboard can execute is the monitor, via **Move the
+pager** on a service decided as hand-off, concede, or delete. It reroutes a
+notify handle to the receiving team, or changes the priority.
+
+- **Read before write, always.** The modal fetches the live monitor from
+  Datadog; the diff is computed server-side and re-derived on confirm, so a
+  preview left open cannot be replayed against a monitor that moved. In
+  Confluence mode `Monitor.message` is empty, so a locally computed diff would
+  claim "add a handle" when the truth is "replace the two already there" — if
+  the read fails, there is no write.
+- **Substitution is bounded, not a string replace.** `rerouteMessage()` only
+  matches a handle when the next character cannot continue one, because
+  replacing `@slack-growth` with a naive replace would silently rewrite
+  `@slack-growth-alerts` too.
+- **Operator input is allowlisted.** The new handle must match the Datadog
+  handle grammar — no whitespace, no newline, nothing that could open a
+  `{{...}}` template — since it is substituted into a message Datadog renders
+  and routes.
+- **Audited and revertable.** Rows land in `AppliedChange` in the same
+  `{field, value}` shape the apply path uses, so the existing Revert button
+  rolls them back. One field per change, which is what keeps that true.
+
 ### Nothing mutates without a confirmation
 
 Every write in the dashboard passes through `ConfirmDialog`, which states what

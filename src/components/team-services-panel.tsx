@@ -18,8 +18,10 @@ import {
 } from "@/lib/team-services";
 import { getConfig } from "@/lib/config";
 import { buildHandoffDraft } from "@/lib/ownership-draft";
+import { OwnershipAction } from "@/lib/constants";
 import { priorityTone } from "@/lib/format";
 import { OwnershipActions } from "@/components/ownership-actions";
+import { MonitorRoutingControl } from "@/components/monitor-routing-control";
 import type { OwnershipDecisionRef, ServiceMonitorRef } from "@/lib/queries";
 
 const VERDICT_TONE: Record<OwnershipVerdict, string> = {
@@ -99,6 +101,16 @@ export function TeamServicesPanel({
     </div>
   );
 }
+
+/**
+ * Decisions where somebody else should start getting the page. `claim` and
+ * `keep` leave us on the hook on purpose, so they get no routing control.
+ */
+const PAGER_MOVES_ON: string[] = [
+  OwnershipAction.HandOff,
+  OwnershipAction.Concede,
+  OwnershipAction.Delete,
+];
 
 export function ServiceRow({
   service,
@@ -195,7 +207,14 @@ export function ServiceRow({
         decision={decision}
         draft={draft}
         decidedOnVerdict={decision ? decision.verdict === verdict : undefined}
-      />
+      >
+        {decision && PAGER_MOVES_ON.includes(decision.action) && (
+          <MonitorRoutingControl
+            monitors={monitors}
+            targetTeam={decision.targetTeam}
+          />
+        )}
+      </OwnershipActions>
     </li>
   );
 }
