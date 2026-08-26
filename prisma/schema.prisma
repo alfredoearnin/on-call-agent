@@ -304,3 +304,40 @@ model AutomationTrigger {
   @@index([automationKey, triggeredAt])
   @@index([triggeredAt])
 }
+
+/// An operator's decision about a service's on-call ownership, taken from the
+/// Services page: hand it to another team, mark it for deletion, fix its tag,
+/// claim it, concede it, or keep it despite the finding.
+///
+/// A LOCAL RECORD, NOT AN EXECUTION. The authoritative owner lives in Cortex's
+/// `owningTeamTags` and this app has no Cortex write client, so a row here says
+/// "we decided X" and never "X has been done". The Cortex retag and the
+/// receiving team's ticket stay manual; the row is what stops the same finding
+/// being re-litigated every week and, because prisma/oncall.db is committed, it
+/// travels with the repo like the rest of the dashboard's memory.
+///
+/// Append-only. The current decision for a service is the newest row with a null
+/// `revokedAt`; undoing sets `revokedAt` rather than deleting, so the trail of
+/// who decided what and when survives.
+///
+/// `service` is the catalog tag with no FK, matching AutomationTrigger: the
+/// SQLite provider rewrites a whole table when its FKs change, which would turn
+/// every migration into a large binary diff on a committed database.
+model OwnershipDecision {
+  id      String @id @default(cuid())
+  service String // TeamService.name, validated against the catalog on write
+  action  String // OwnershipAction
+
+  /// Receiving team for hand-off and concede. Null for the other actions.
+  targetTeam String?
+  /// The verdict this decision answered, kept so a later catalog correction
+  /// cannot silently repurpose the decision.
+  verdict    String
+  operator   String
+
+  decidedAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([service, decidedAt])
+  @@index([decidedAt])
+}

@@ -193,11 +193,129 @@ cloud by the daily-refresh automation, which drops the markdown into
   **"What happened"**.
 - **Carryover** — still-firing incident.io alerts carried over from prior weeks
   (Datadog reads OK/No Data) that need a manual clear.
+- **Services** — service ownership reconciled across three disagreeing sources
+  (see below), with every monitor linked by id.
 - **Recommendations** / **Monitors** — the learned tuning recommendations and
   per-monitor detail, with the guarded Apply/Revert path.
 - **Settings** — data source + freshness, **cloud automations** (per-automation
   health inferred from local evidence, plus a guarded Re-run button), sync history,
   and refresh controls.
+
+---
+
+## Service ownership (three sources that disagree)
+
+The **Services** page answers "what are we actually on-call for", which no single
+system knows. `src/lib/team-services.ts` holds the reconciliation:
+
+| Source | Field | What it means |
+| --- | --- | --- |
+| Growth Ownership Inventory (sheet) | `sheetIntent` | What the team *intends* to own: `keep` / `hand-off` / `deprecate` / `not-listed`. |
+| Cortex catalog | `cortexOwners` | What the org *records*. Drives escalation. An empty array means the tag does not exist in Cortex at all. |
+| Datadog | `Monitor.service` | What actually pages someone. |
+
+`verdictFor()` derives the verdict from the first two rather than storing it:
+
+- **corroborated** — the sheet keeps it and Cortex names a Growth team.
+- **disputed** — the sheet keeps it, Cortex names someone else. A boundary
+  decision to settle with that team, not a bug to fix.
+- **unsupported** — already handed off, deprecated, tagged to another team with
+  no claim, or the tag resolves to nothing in Cortex.
+
+Two rules are deliberate:
+
+1. **Intent and record are separate fields.** An earlier version had one
+   `cortexOwner` field asserting `L2-PENG-Growth` on nearly every entry, while
+   Cortex records only eight services to Growth — so most of those claims named a
+   tag that does not exist. One field cannot hold both facts.
+2. **Unsupported entries stay in the file.** Deleting them would hide the
+   finding. They are excluded from `onCallScope()` but still rendered under
+   "Leave the rotation" with their reason and their live monitors, because a
+   monitor still paging us for a service we gave away is the actionable part.
+
+Tests assert structure and the derivation rules, never who owns what — ownership
+is external, moving truth, and pinning it in tests means every correction has to
+fight the suite.
+
+### Acting on a finding
+
+Each service on `/services` carries the actions its verdict supports, derived by
+`actionsFor()` so a button can never contradict the finding above it: a
+`hand-off` names the team the inventory chose, a dispute offers *claim* or
+*concede* to each team Cortex records, a dead tag offers a fix, and everything
+offers **Keep in scope** — a wrong verdict must always have an exit.
+
+**A decision is a record, not an execution.** The authoritative owner lives in
+Cortex's `owningTeamTags` and this app has no Cortex write client, so pressing a
+button stores who decided what and when; the retag and the receiving team's
+ticket stay manual. What the record buys is that the same 37 findings stop being
+re-litigated every handoff, and — because `prisma/oncall.db` is committed — the
+decisions travel with the repo like the rest of the dashboard's memory.
+
+Three properties worth knowing:
+
+- **Append-only.** Undo sets `revokedAt` instead of deleting, so the trail
+  survives. The live decision is the newest unrevoked row per service.
+- **Re-validated server-side.** `recordOwnershipDecisionAction` re-derives the
+  allowed actions and rejects anything else, so a stale page cannot record a
+  concede to a team Cortex never named.
+- **Verdict-stamped.** Each row keeps the verdict it answered. If a catalog
+  correction changes that verdict later, the row is flagged rather than silently
+  repurposed.
+
+Deciding produces a hand-off packet — verdict, both sources, and every monitor
+with its id and Datadog link — so the receiving team inherits the evidence along
+with the pager. Set `JIRA_HANDOFF_PROJECT_ID` and `JIRA_HANDOFF_ISSUE_TYPE_ID`
+(numeric, read off Jira's create-issue URL) and the link opens prefilled;
+without them it opens Jira's create page next to a **Copy handoff note** button.
+
+Labels say `Decided: hand off`, never `Handed off`, and every unexecuted
+decision carries a line naming what is still outstanding. A checklist that reads
+as done while the pager still rings is worse than no checklist.
+
+### Moving the pager
+
+The one remediation the dashboard can execute is the monitor, via **Move the
+pager** on a service decided as hand-off, concede, or delete. It reroutes a
+notify handle to the receiving team, or changes the priority.
+
+- **Read before write, always.** The modal fetches the live monitor from
+  Datadog; the diff is computed server-side and re-derived on confirm, so a
+  preview left open cannot be replayed against a monitor that moved. In
+  Confluence mode `Monitor.message` is empty, so a locally computed diff would
+  claim "add a handle" when the truth is "replace the two already there" — if
+  the read fails, there is no write.
+- **Substitution is bounded, not a string replace.** `rerouteMessage()` only
+  matches a handle when the next character cannot continue one, because
+  replacing `@slack-growth` with a naive replace would silently rewrite
+  `@slack-growth-alerts` too.
+- **Operator input is allowlisted.** The new handle must match the Datadog
+  handle grammar — no whitespace, no newline, nothing that could open a
+  `{{...}}` template — since it is substituted into a message Datadog renders
+  and routes.
+- **Audited and revertable.** Rows land in `AppliedChange` in the same
+  `{field, value}` shape the apply path uses, so the existing Revert button
+  rolls them back. One field per change, which is what keeps that true.
+
+### Nothing mutates without a confirmation
+
+Every write in the dashboard passes through `ConfirmDialog`, which states what
+changes and where before anything happens. This includes the local-only ones:
+"this records a decision and changes nothing in Cortex or Datadog" is precisely
+what a reader needs told, and it was the first thing anyone asked about the
+buttons. External writes get the warning styling, a destructive-coloured confirm,
+and the reminder that the receiving team should hear about it first.
+
+### Linking monitors to services
+
+The weekly Confluence report carries monitor ids but no service column, so
+`serviceFromTitle()` attributes a monitor only when its title spells out a known
+catalog tag *literally*, longest tag first (`service-postman-internal` must not
+be read as `service-postman`). Titles like `OTGE containers not ready` are left
+unattributed on purpose: a human knows which service that is, but guessing would
+link a monitor to a service that does not own it. Unattributed services fall back
+to a Datadog monitor search scoped to the service name, so nothing renders a
+misleading zero.
 
 ---
 
@@ -347,6 +465,33 @@ into a real monitor edit via the Datadog API. Guardrails:
 > **Terraform / GitOps caveat:** if these monitors are managed as code, a direct API
 > edit can drift from state. The `AppliedChange` record gives you the exact
 > `before → after` to mirror back into Terraform.
+
+### Who is allowed to press Apply
+
+**Nobody is authenticated. There is no login, no session, and no middleware.**
+The only credential check in the app is the `CRON_SECRET` bearer token on
+`/api/ingest`.
+
+Every mutating server action — Apply, Revert, Move the pager, and recording an
+ownership decision — is a POST endpoint reachable by anything that can reach the
+origin. This is fine for `npm run dev` on a laptop, which is what it is built
+for, and it is the assumption behind `APPLY_ENABLED` defaulting to `false`.
+
+It stops being fine the moment the app is served on an interface other than
+loopback. With `APPLY_ENABLED=true` and a write key present, an unauthenticated
+caller can rewrite production monitor routing. If you deploy this anywhere
+shared, put authentication in front of it first; the guardrails above limit the
+*blast radius* of a write, not who may attempt one.
+
+Writes are also attributed to the single configured `APPLY_OPERATOR`, not to a
+person — so the audit trail records *that* a change happened, not who made it.
+
+> **The committed database:** `prisma/oncall.db` is deliberately in git so the
+> history travels with the repo. A reroute performed in `real` mode stores the
+> monitor's full `message` in its `AppliedChange` row — internal Slack channels,
+> webhook handles, on-call emails — and that lands in git history. The full body
+> is what makes one-click Revert possible, so this is a trade, not an oversight.
+> Decide it deliberately before the first real-mode reroute.
 
 ---
 

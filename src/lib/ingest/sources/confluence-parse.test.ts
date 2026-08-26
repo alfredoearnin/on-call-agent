@@ -11,6 +11,7 @@ import {
   parsePageState,
   parseRefreshedAt,
   parseWindow,
+  serviceFromTitle,
 } from "@/lib/ingest/sources/confluence-parse";
 
 const TZ = "America/Los_Angeles";
@@ -785,5 +786,53 @@ describe("parseEventTime", () => {
       Date.now() - started < 1_000,
       `parseEventTime took ${Date.now() - started}ms on adversarial input`,
     );
+  });
+});
+
+describe("serviceFromTitle", () => {
+  // Verbatim monitor titles from the current archive.
+  it("attributes a monitor whose title names the service tag", () => {
+    assert.equal(
+      serviceFromTitle("svc-referral has an abnormal change in Apdex (env:prod)"),
+      "svc-referral",
+    );
+    assert.equal(
+      serviceFromTitle("313314019 — cronjob-mark-tech-crons cron-run failure"),
+      "cronjob-mark-tech-crons",
+    );
+    assert.equal(
+      serviceFromTitle(
+        'Monitor 143557417 — "[job-cashout-attempt-restore-event-processor] Message Processing Failure"',
+      ),
+      "job-cashout-attempt-restore-event-processor",
+    );
+  });
+
+  it("prefers the most specific tag when one contains another", () => {
+    // `service-postman` is also a catalog entry and a prefix of this tag.
+    assert.equal(
+      serviceFromTitle(
+        "119674469 — service-postman-internal high average latency _(fired at Warn)_",
+      ),
+      "service-postman-internal",
+    );
+    // `svc-referral` is a prefix of every referral processor tag.
+    assert.equal(
+      serviceFromTitle("svc-referral-cashout-processor message failures"),
+      "svc-referral-cashout-processor",
+    );
+  });
+
+  it("leaves a monitor unattributed rather than guessing", () => {
+    // Both clearly mean a catalog service to a human, but neither spells the
+    // tag out — attributing them would link a monitor to the wrong owner.
+    assert.equal(serviceFromTitle("OTGE containers not ready (NEW)"), undefined);
+    assert.equal(
+      serviceFromTitle(
+        "HPA sustained high utilization (bank-transactions-neobank) · incident.io alert",
+      ),
+      undefined,
+    );
+    assert.equal(serviceFromTitle("HPA sustained high utilization"), undefined);
   });
 });

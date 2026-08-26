@@ -3,10 +3,14 @@ import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
 import {
   GROWTH_TEAM_SERVICES,
+  dropList,
+  onCallScope,
+  servicesByVerdict,
   summarizeOwnership,
 } from "@/lib/team-services";
 import {
   getLatestRun,
+  getOwnershipDecisions,
   getTrendSeries,
   getLatestVuln,
   getRecommendations,
@@ -28,12 +32,13 @@ export const dynamic = "force-dynamic";
 
 export default async function OverviewPage() {
   const cfg = getConfig();
-  const [run, series, vuln, recs, settings] = await Promise.all([
+  const [run, series, vuln, recs, settings, decisions] = await Promise.all([
     getLatestRun(),
     getTrendSeries(30),
     getLatestVuln(),
     getRecommendations(),
     getSyncSettings(),
+    getOwnershipDecisions(),
   ]);
   const tz = settings?.timezone ?? cfg.team.timezone;
   const now = new Date();
@@ -59,6 +64,16 @@ export default async function OverviewPage() {
   );
   const topRecs = recs.slice(0, 3);
   const serviceSummary = summarizeOwnership(GROWTH_TEAM_SERVICES);
+  const serviceScope = onCallScope();
+  // Findings shrink as they are decided, so the card reports what is still owed
+  // rather than the original count.
+  const undecidedDrops = dropList().filter((s) => !decisions[s.name]).length;
+  const undecidedDisputes = servicesByVerdict("disputed").filter(
+    (s) => !decisions[s.name],
+  ).length;
+  const decidedCount = GROWTH_TEAM_SERVICES.filter(
+    (s) => decisions[s.name],
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -181,19 +196,35 @@ export default async function OverviewPage() {
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Team services</CardTitle>
+              <CardTitle>Service ownership</CardTitle>
             </CardHeader>
             <CardContent className="text-sm">
-              <div className="text-2xl font-semibold">{serviceSummary.total}</div>
+              <div className="text-2xl font-semibold">{serviceScope.length}</div>
               <div className="mt-1 text-xs text-muted-foreground">
-                {serviceSummary.confirmed} confirmed · {serviceSummary.review} need
-                review
+                in on-call scope · {serviceSummary.corroborated} confirmed in
+                Cortex
               </div>
+              {undecidedDrops > 0 && (
+                <div className="mt-2 text-xs text-alert">
+                  {undecidedDrops} should leave the rotation
+                </div>
+              )}
+              {undecidedDisputes > 0 && (
+                <div className="mt-1 text-xs text-warn">
+                  {undecidedDisputes} boundaries unresolved with{" "}
+                  {serviceSummary.counterparties.length} teams
+                </div>
+              )}
+              {decidedCount > 0 && (
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {decidedCount} decided — the retags stay manual
+                </div>
+              )}
               <Link
                 href="/services"
                 className="mt-3 inline-block text-primary hover:underline"
               >
-                View full catalog →
+                Ownership findings →
               </Link>
             </CardContent>
           </Card>

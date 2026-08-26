@@ -199,6 +199,30 @@ export const WeekCloseState = {
 } as const;
 export type WeekCloseState = (typeof WeekCloseState)[keyof typeof WeekCloseState];
 
+/**
+ * What an operator decided to do about a service's on-call ownership.
+ *
+ * These record intent, not execution: the authoritative owner lives in Cortex
+ * and the dashboard cannot write there. `Keep` is the deliberate override —
+ * it answers a finding by rejecting it, which is a decision worth recording.
+ */
+export const OwnershipAction = {
+  /** Give it to the team the ownership inventory names. */
+  HandOff: "hand-off",
+  /** Delete the service rather than transfer it. */
+  Delete: "delete",
+  /** The tag resolves to nothing in Cortex; fix that before deciding ownership. */
+  FixTag: "fix-tag",
+  /** Assert Growth ownership and retag Cortex to match. */
+  Claim: "claim",
+  /** Drop the claim in favour of the team Cortex already records. */
+  Concede: "concede",
+  /** Reject the finding and keep the service in scope. */
+  Keep: "keep",
+} as const;
+export type OwnershipAction =
+  (typeof OwnershipAction)[keyof typeof OwnershipAction];
+
 /** Outcome of a dashboard-initiated automation webhook trigger. */
 export const TriggerStatus = {
   Triggered: "triggered",

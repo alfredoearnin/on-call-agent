@@ -72,6 +72,16 @@ export interface AppConfig {
     email: string;
     apiToken: string;
     vulnFilterId: string;
+    /**
+     * Numeric project and issue-type ids for the prefilled ownership hand-off
+     * draft. Jira's `CreateIssueDetails!init.jspa` prefill needs numeric ids,
+     * not a project key, and there is no way to derive one from the other
+     * without a write-scoped API call. Both empty (the default) degrades to
+     * Jira's plain create page plus a copy-ready note, so the feature never
+     * depends on this being configured.
+     */
+    handoffProjectId: string;
+    handoffIssueTypeId: string;
   };
   confluence: {
     spaceKey: string;
@@ -184,6 +194,8 @@ export function getConfig(): AppConfig {
       email: str("JIRA_EMAIL", ""),
       apiToken: str("JIRA_API_TOKEN", ""),
       vulnFilterId: str("JIRA_VULN_FILTER_ID", "15295"),
+      handoffProjectId: str("JIRA_HANDOFF_PROJECT_ID", ""),
+      handoffIssueTypeId: str("JIRA_HANDOFF_ISSUE_TYPE_ID", ""),
     },
     confluence: {
       // On-call names are parsed from the weekly handoff page the on-call agent

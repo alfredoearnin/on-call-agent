@@ -294,6 +294,93 @@ export async function getMonitorDetail(id: string) {
   });
 }
 
+export interface ServiceMonitorRef {
+  id: string;
+  name: string;
+  priority: string;
+  currentState: string;
+  datadogUrl: string | null;
+  alertCount: number;
+}
+
+/**
+ * Monitors grouped by the service tag they watch, keyed by service name.
+ *
+ * Only the `demo` and `live` ingests populate `Monitor.service`: the Confluence
+ * parser builds monitors from the weekly report's tables, which carry a monitor
+ * id but no service column. So a service with no entry here means "we have not
+ * ingested a monitor for it", NOT "it has no monitors" — the ownership view
+ * falls back to a Datadog monitor search per service rather than rendering a
+ * zero that would read as coverage.
+ */
+export async function getServiceMonitors(
+  serviceNames: string[],
+): Promise<Record<string, ServiceMonitorRef[]>> {
+  if (serviceNames.length === 0) return {};
+
+  const monitors = await prisma.monitor.findMany({
+    where: { service: { in: serviceNames } },
+    orderBy: [{ priority: "asc" }, { name: "asc" }],
+    include: { _count: { select: { alerts: true } } },
+  });
+
+  const byService: Record<string, ServiceMonitorRef[]> = {};
+  for (const m of monitors) {
+    if (!m.service) continue;
+    const list = byService[m.service] ?? [];
+    list.push({
+      id: m.id,
+      name: m.name,
+      priority: m.priority,
+      currentState: m.currentState,
+      datadogUrl: m.datadogUrl,
+      alertCount: m._count.alerts,
+    });
+    byService[m.service] = list;
+  }
+  return byService;
+}
+
+export interface OwnershipDecisionRef {
+  id: string;
+  action: string;
+  targetTeam: string | null;
+  verdict: string;
+  operator: string;
+  decidedAt: Date;
+}
+
+/**
+ * The live ownership decision per service, keyed by service tag.
+ *
+ * The table is append-only, so "live" is the newest unrevoked row for a service.
+ * Fetching every unrevoked row and keeping the first per service works because
+ * the result is ordered newest-first — and it stays one query rather than one
+ * per service.
+ */
+export async function getOwnershipDecisions(): Promise<
+  Record<string, OwnershipDecisionRef>
+> {
+  const rows = await prisma.ownershipDecision.findMany({
+    where: { revokedAt: null },
+    orderBy: { decidedAt: "desc" },
+  });
+
+  const byService: Record<string, OwnershipDecisionRef> = {};
+  for (const r of rows) {
+    if (byService[r.service]) continue;
+    byService[r.service] = {
+      id: r.id,
+      action: r.action,
+      targetTeam: r.targetTeam,
+      verdict: r.verdict,
+      operator: r.operator,
+      decidedAt: r.decidedAt,
+    };
+  }
+  return byService;
+}
+
 export async function getProductionIncidents(runWindowStart?: Date) {
   return prisma.incident.findMany({
     where: {

@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
 import { getConfig } from "@/lib/config";
+import { GROWTH_TEAM_SERVICES } from "@/lib/team-services";
 import {
   Coverage,
   CoverageRole,
@@ -927,6 +928,29 @@ function parseVuln(md: string): IngestBundle["vuln"] {
 
 // ── Monitors (minimal, collected from recs + alerts for FK + links) ─────────
 
+/**
+ * Known service tags, longest first so the more specific tag wins: a title
+ * naming `service-postman-internal` must not be attributed to `service-postman`.
+ */
+const KNOWN_SERVICE_TAGS = [
+  ...new Set(GROWTH_TEAM_SERVICES.map((s) => s.name)),
+].sort((a, b) => b.length - a.length);
+
+/**
+ * The weekly report has no service column, so a monitor's own title is the only
+ * evidence tying it to a service.
+ *
+ * Matching is literal against the known catalog: a monitor is attributed only
+ * when its title spells out that service's exact tag. Anything looser is left
+ * unattributed on purpose — "OTGE" and "bank-transactions-neobank" both clearly
+ * mean a catalog service to a human, but inferring it would let the ownership
+ * view link a monitor to a service that does not own it, which is worse than
+ * showing no link at all.
+ */
+export function serviceFromTitle(text: string): string | undefined {
+  return KNOWN_SERVICE_TAGS.find((tag) => text.includes(tag));
+}
+
 function collectMonitors(
   recs: NormalizedRecommendation[],
   alerts: NormalizedAlert[],
@@ -934,10 +958,18 @@ function collectMonitors(
   const appBase = getConfig().datadog.appBase;
   const byId = new Map<string, NormalizedMonitor>();
   const add = (id: string | undefined, name: string) => {
-    if (!id || byId.has(id)) return;
+    if (!id) return;
+    const existing = byId.get(id);
+    if (existing) {
+      // A monitor is mentioned in several places; a later one may name the
+      // service the first omitted.
+      existing.service ??= serviceFromTitle(name);
+      return;
+    }
     byId.set(id, {
       id,
       name,
+      service: serviceFromTitle(name),
       priority: Priority.High,
       tags: [],
       state: MonitorState.Unknown,

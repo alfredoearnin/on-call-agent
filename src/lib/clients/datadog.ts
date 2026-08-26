@@ -65,7 +65,7 @@ export class DatadogClient {
 
   async getMonitor(id: number | string): Promise<DatadogMonitor> {
     return httpRequest<DatadogMonitor>(
-      `${this.cfg.datadog.apiBase}/api/v1/monitor/${id}`,
+      `${this.cfg.datadog.apiBase}/api/v1/monitor/${monitorPath(id)}`,
       { headers: readHeaders(this.cfg) },
     );
   }
@@ -125,8 +125,21 @@ export class DatadogClient {
     patch: Record<string, unknown>,
   ): Promise<DatadogMonitor> {
     return httpRequest<DatadogMonitor>(
-      `${this.cfg.datadog.apiBase}/api/v1/monitor/${id}`,
+      `${this.cfg.datadog.apiBase}/api/v1/monitor/${monitorPath(id)}`,
       { method: "PUT", headers: writeHeaders(this.cfg), body: patch },
     );
   }
+}
+
+/**
+ * A monitor id safe to interpolate into a request path.
+ *
+ * `fetch` resolves `..` segments before sending, so an id like
+ * `../../../api/v2/team` would point a request — a PUT with the write key
+ * attached — at an endpoint the caller chose. Callers validate their input;
+ * this encodes it anyway, because a single missed call site here is a
+ * credentialed request to somewhere unintended.
+ */
+function monitorPath(id: number | string): string {
+  return encodeURIComponent(String(id));
 }
