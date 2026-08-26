@@ -466,6 +466,33 @@ into a real monitor edit via the Datadog API. Guardrails:
 > edit can drift from state. The `AppliedChange` record gives you the exact
 > `before → after` to mirror back into Terraform.
 
+### Who is allowed to press Apply
+
+**Nobody is authenticated. There is no login, no session, and no middleware.**
+The only credential check in the app is the `CRON_SECRET` bearer token on
+`/api/ingest`.
+
+Every mutating server action — Apply, Revert, Move the pager, and recording an
+ownership decision — is a POST endpoint reachable by anything that can reach the
+origin. This is fine for `npm run dev` on a laptop, which is what it is built
+for, and it is the assumption behind `APPLY_ENABLED` defaulting to `false`.
+
+It stops being fine the moment the app is served on an interface other than
+loopback. With `APPLY_ENABLED=true` and a write key present, an unauthenticated
+caller can rewrite production monitor routing. If you deploy this anywhere
+shared, put authentication in front of it first; the guardrails above limit the
+*blast radius* of a write, not who may attempt one.
+
+Writes are also attributed to the single configured `APPLY_OPERATOR`, not to a
+person — so the audit trail records *that* a change happened, not who made it.
+
+> **The committed database:** `prisma/oncall.db` is deliberately in git so the
+> history travels with the repo. A reroute performed in `real` mode stores the
+> monitor's full `message` in its `AppliedChange` row — internal Slack channels,
+> webhook handles, on-call emails — and that lands in git history. The full body
+> is what makes one-click Revert possible, so this is a trade, not an oversight.
+> Decide it deliberately before the first real-mode reroute.
+
 ---
 
 ## Scripts
