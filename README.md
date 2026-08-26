@@ -237,6 +237,19 @@ Tests assert structure and the derivation rules, never who owns what — ownersh
 is external, moving truth, and pinning it in tests means every correction has to
 fight the suite.
 
+### Linking monitors to services
+
+The weekly Confluence report carries monitor ids but no service column, so
+`serviceFromTitle()` attributes a monitor only when its title spells out a known
+catalog tag *literally*, longest tag first (`service-postman-internal` must not
+be read as `service-postman`). Titles like `OTGE containers not ready` are left
+unattributed on purpose: a human knows which service that is, but guessing would
+link a monitor to a service that does not own it. Unattributed services fall back
+to a Datadog monitor search scoped to the service name, so nothing renders a
+misleading zero.
+
+---
+
 ## The "memory" (shared via git)
 
 The database is a **committed SQLite file** at `prisma/oncall.db`. Because it is
