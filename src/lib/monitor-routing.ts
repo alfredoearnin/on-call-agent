@@ -70,10 +70,13 @@ export interface RerouteResult {
 /**
  * Replace every standalone occurrence of `from` with `to`.
  *
- * "Standalone" is the whole point: a plain string replace of `@slack-growth`
- * would corrupt `@slack-growth-alerts` into `@slack-cashout-alerts`, silently
- * redirecting a channel nobody asked about. A match only counts when the next
- * character cannot continue a handle.
+ * "Standalone" is the whole point, and it has two sides. A plain replace of
+ * `@slack-growth` would corrupt `@slack-growth-alerts` into
+ * `@slack-cashout-alerts`; checking only that side still lets `@earnin.com`
+ * match inside `@alice@earnin.com` and rewrite a handle the operator never
+ * selected. Both are the same failure — silently redirecting a page nobody
+ * asked about — so a match counts only when neither neighbouring character
+ * could continue a handle.
  */
 export function rerouteMessage(
   message: string,
@@ -92,6 +95,7 @@ export function rerouteMessage(
   while (i < message.length) {
     if (
       message.startsWith(from, i) &&
+      !continuesHandle(message[i - 1]) &&
       !continuesHandle(message[i + from.length])
     ) {
       out += to;

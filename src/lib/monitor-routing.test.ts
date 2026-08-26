@@ -188,6 +188,30 @@ describe("rerouteMessage", () => {
     );
     assert.equal(replaced, 0, "@alice is a prefix of an email handle here");
   });
+
+  it("does not rewrite a handle it is only the tail of", () => {
+    // The mirror of the prefix case: @earnin.com occurs standalone, so the
+    // operator can legitimately select it, but it also sits at the end of
+    // @alice@earnin.com — a handle they never picked.
+    const before = "Paging @alice@earnin.com and also @earnin.com for backup";
+    const { message, replaced } = rerouteMessage(
+      before,
+      "@earnin.com",
+      "@bob",
+    );
+    assert.equal(replaced, 1);
+    assert.equal(
+      message,
+      "Paging @alice@earnin.com and also @bob for backup",
+      "the email handle must keep its recipient",
+    );
+  });
+
+  it("substitutes at the very start of a message", () => {
+    const { message, replaced } = rerouteMessage("@a paged", "@a", "@b");
+    assert.equal(replaced, 1);
+    assert.equal(message, "@b paged");
+  });
 });
 
 describe("isTeamMonitor", () => {
