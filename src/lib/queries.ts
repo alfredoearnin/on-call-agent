@@ -429,7 +429,8 @@ export async function getAutomationHealth(
  *
  * Reads the newest run of any status for the same reason getAutomationHealth
  * does: after a failed run, an older row's stamp must not stand in as the latest
- * look at the source.
+ * look at the source. It also reads the archive on disk, so the figure can
+ * report the ingested copy being behind the repo — see assessSourceFreshness.
  */
 export async function getSourceFreshness(
   now: Date = new Date(),
@@ -437,7 +438,10 @@ export async function getSourceFreshness(
   const cfg = getConfig();
   if (!hasCloudAutomations(cfg)) return null;
 
+  const tz = cfg.team.timezone;
   const run = await getLatestRunAnyStatus();
+  const newest = readPageArchive(tz).weeks.at(-1);
+
   return assessSourceFreshness(
     {
       refreshedAt: run?.handoffRefreshedAt ?? undefined,
@@ -447,8 +451,9 @@ export async function getSourceFreshness(
       noRun: !run,
     },
     now,
-    cfg.team.timezone,
+    tz,
     cfg.automations,
+    { refreshedAt: newest?.refreshedAt, refreshedText: newest?.refreshedText },
   );
 }
 

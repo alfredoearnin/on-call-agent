@@ -338,6 +338,19 @@ npm run ingest                           # re-run to reconcile the latest state
 If multiple writers appear, that's the signal to move to Postgres (see
 [Portability](#portability)).
 
+**Caveat — `git pull` detaches a running dev server.** Tracking the database has
+a second cost that is easy to miss because nothing errors. A pull replaces
+`prisma/oncall.db` with a new file rather than editing the old one, so a `next
+dev` started beforehand keeps its descriptor on the orphaned inode and serves the
+pre-pull database. Every later `npm run ingest` writes to the new file, where the
+server cannot see it — the dashboard looks merely quiet rather than detached.
+
+Restarting the server is the whole fix. To recognise it without knowing any of
+the above, the header cross-checks the ingested `Last refreshed` stamp against
+`data/confluence/*.md` and reads **sync behind source** when the repo holds a
+newer page than the one on screen. It compares stamps rather than inodes, so a
+checkout that leaves the data unchanged stays quiet.
+
 ---
 
 ## Quick start
@@ -538,6 +551,11 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   **Refresh from source** (runs `git pull`) to pull the latest that the daily
   automation pushed to `main`; **Sync now** only re-parses the local
   `data/confluence/*.md` files.
+- **Header reads "sync behind source", and syncing does not clear it** — the pull
+  replaced `prisma/oncall.db` underneath the running server, which is still
+  reading the old file. Restart `npm run dev`. See
+  [the memory](#the-memory-shared-via-git) for why tracking the database causes
+  this.
 - **New Confluence format not showing** — did you paste the updated prompt from
   `agents/` into the Health Check automation? The cloud agent runs its pasted
   instructions, not this repo's copy. Committing a prompt change records what *should*

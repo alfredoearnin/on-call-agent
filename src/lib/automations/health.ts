@@ -616,6 +616,17 @@ export interface SourceFreshness {
   note: string;
   /** The source missed at least one scheduled refresh. */
   stale: boolean;
+  /**
+   * The repo holds a newer page than the one that was ingested, so this figure
+   * is describing a copy that has already been superseded.
+   */
+  behindDisk?: boolean;
+}
+
+/** The newest handoff page as it sits in the repo right now. */
+export interface DiskPage {
+  refreshedAt?: Date;
+  refreshedText?: string;
 }
 
 const fmtStamp = (d: Date, zone: string) =>
@@ -642,6 +653,19 @@ export function assessSourceFreshness(
   /** Zone the page states its own stamp in, for quoting it back. */
   zone: string,
   schedule: AutomationSchedule,
+  /**
+   * The newest page on disk, so this figure can catch itself being stale.
+   *
+   * Ageing the ingested stamp alone is not enough: the stamp only moves when
+   * `npm run ingest` runs, so a repo that has pulled a newer page reports the
+   * age of a copy nobody is looking at any more. Worse, `prisma/oncall.db` is
+   * tracked, so a `git pull` replaces the file underneath a running server —
+   * which then holds a descriptor on the orphaned inode and serves the
+   * pre-pull database no matter how many times the ingest runs. Comparing
+   * against the files is the one check that survives both, and it compares
+   * content rather than inodes so an unchanged checkout never false-alarms.
+   */
+  onDisk?: DiskPage,
 ): SourceFreshness {
   if (page.noRun) {
     return {
@@ -649,6 +673,29 @@ export function assessSourceFreshness(
       tone: "neutral",
       stale: false,
       note: "Nothing has been ingested in this checkout yet, so there is no source to age.",
+    };
+  }
+
+  const behind =
+    onDisk?.refreshedAt &&
+    (!page.refreshedAt ||
+      onDisk.refreshedAt.getTime() > page.refreshedAt.getTime());
+
+  if (behind) {
+    const ingested = page.refreshedText
+      ? `"${page.refreshedText}"`
+      : "no readable stamp";
+    return {
+      refreshedAt: page.refreshedAt,
+      refreshedText: page.refreshedText,
+      age: humanGap(Math.max(now.getTime() - onDisk.refreshedAt!.getTime(), 0)),
+      // An age would read as reassurance here — the source IS fresh; the problem
+      // is that we are not showing it.
+      label: "sync behind source",
+      tone: "warn",
+      stale: true,
+      behindDisk: true,
+      note: `This repo holds a page refreshed "${onDisk.refreshedText}", but what is ingested is ${ingested} — so the dashboard is behind its own source. Sync from source to pick it up; if that leaves this line unchanged, the server is reading a database file that git has since replaced and needs a restart.`,
     };
   }
 
