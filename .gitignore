@@ -32,6 +32,24 @@ yarn-error.log*
 # OS
 .DS_Store
 *.pem
+# iCloud renames a file it cannot merge to "name 2.ts" rather than reporting a
+# conflict, and this repo lives under ~/Documents. The copy is byte-identical,
+# so a stray `git add -A` commits a second copy of a module that nothing
+# imports — a dead file that reads as live, and the wrong one to edit.
+#
+# Both forms are needed: a duplicate of `.env` is named `.env 2`, with no
+# trailing dot, and that is the copy that would carry real credentials.
+#
+# These match on filename shape, not origin, so a deliberate "Phase 2.md" would
+# be hidden too. `git status --ignored` shows it; `git add -f` commits it.
+* [2-9].*
+* [2-9]
+
+# Local editor / agent config. Whole-directory: everything here today is
+# personal (a dev-server launch config, an agent permission list). If shared
+# config ever lands here — a pre-commit hook the team is meant to inherit —
+# negate that file, or clones will silently lack it.
+.claude/
 
 # TypeScript
 *.tsbuildinfo
