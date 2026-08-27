@@ -489,13 +489,21 @@ next step.
      reason in the same sentence (e.g. "incident.io connector down").
    - **Coverage check — fixed wording.** Someone named on-call who is on PTO is the gap that
      becomes an unanswered page, so check availability and state it. For each of the four
-     rotation names (primary, secondary, next primary, next secondary): resolve the person with
-     `slack_search_users`, read their status with `slack_read_user_profile`, and treat them as
-     out of office when the status emoji is an out-of-office emoji (`:palm_tree:`,
-     `:desert_island:`, `:airplane:`, `:ooo:`) **or** the status text contains OOO, PTO,
-     vacation, out of office, annual leave, or holiday. A status whose expiry has already
-     passed is **not** absence. Write the result verbatim in this shape, on its own lines,
-     directly beneath the on-call names:
+     rotation names (primary, secondary, next primary, next secondary): resolve the person to a
+     Slack user ID, then **read their full profile** and inspect its status.
+
+     **Find the tools by capability, not by name.** The same two tools are exposed under
+     different names depending on which Slack MCP this automation has — bare
+     (`slack_search_users`, `slack_read_user_profile`) under the Slack plugin, prefixed
+     (`slack__slack_search_users`, `slack__slack_read_user_profile`) under the MintMCP bundle.
+     If one name is missing, look for the other before concluding anything. **Searching for a
+     user does not return their status** — only the profile read does, so the profile read is
+     the step that cannot be skipped.
+
+     Treat someone as out of office when the status emoji is an out-of-office emoji
+     (`:palm_tree:`, `:desert_island:`, `:airplane:`, `:ooo:`) **or** the status text contains
+     OOO, PTO, vacation, out of office, annual leave, or holiday. Write the result verbatim in
+     this shape, on its own lines, directly beneath the on-call names:
 
      `_Coverage check (Slack out-of-office, as of <now> <timezone>):_`
      `* Primary **<name>** — out of office **<YYYY-MM-DD> → <YYYY-MM-DD>**`
@@ -503,7 +511,7 @@ next step.
      `* Next primary **<name>** — available`
      `* Next secondary **<name>** — available`
 
-     Rules, all three mandatory:
+     Rules, all four mandatory:
 
      - **Always write the header line when the check runs**, even when everyone is available.
        Its absence is how the dashboard tells "everyone is available" apart from "the check
@@ -514,9 +522,32 @@ next step.
 
        Do the same for a single person you cannot resolve: write
        `* Primary **<name>** — could not be checked` rather than assuming they are available.
+
+       **Name the specific obstacle, never the capability.** Write which tool was missing or
+       which call failed — "no Slack profile tool available under either name", "profile read
+       returned 403". Do **not** write that Slack or the integration "does not expose
+       out-of-office status": it does, the profile read returns it, and a sentence like that
+       sends whoever reads the page looking for a replacement for something that already works.
+
+       **Describe the failure in your own words — never paste a raw error string.** They carry
+       user IDs and emails, and this page is permanent and in every clone. "profile read
+       returned 403" is the whole fact; `users.profile.get failed: user_not_found U01ABC2DEF3`
+       leaks a colleague's identifier to say the same thing.
+
+       **Keep the reason under 80 characters.** The dashboard reads it out of the parentheses
+       with a bounded capture; a longer reason is dropped silently and the banner then reports
+       a failure with no explanation at all.
+     - **Getting the dates.** Most profile reads return the status flattened to emoji plus
+       text, with no separate expiry field, so do not assume one is available. Take the dates
+       from the status text when it states them ("OOO until Sep 3", "PTO Aug 25–29") — the
+       dates only, never any other word from that status, which is exactly where someone
+       writes a reason they would not want committed. Use an
+       expiry field only if the tool actually returns one, and remember an expiry already in
+       the past is **not** absence. When no dates can be established either way, use the
+       on-call week's end date and add `(open-ended)` after the range — the person is out, the
+       return date is simply unknown, and those are different facts.
      - **Record only the fact of absence and its dates.** Never the reason, the leave type, or
-       any medical or personal detail — see the redaction rules above. If the Slack status has
-       no expiry, use the on-call week's end date and add `(open-ended)` after the range.
+       any medical or personal detail — see the redaction rules above.
 2. **`<h2>` SLOs / SLAs (15 minutes)** — links **and** the auto-summary live **here**, before
    Incidents (verify ordering in the published page; don't let them drift below later sections).
    - Bulleted links: Consolidated PENG-Growth Dashboard (`dashboard_url`), PENG Bugs OOSLA
