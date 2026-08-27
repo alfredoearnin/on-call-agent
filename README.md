@@ -155,6 +155,29 @@ in that case the dashboard says *unknown*, never *available*. Slack's Google Cal
 sets the status automatically for events titled "OOO" or "PTO", which is what keeps the
 coverage from depending purely on memory.
 
+**Two things that have already gone wrong here**, both worth knowing before reaching for a
+different source:
+
+- *Searching for a user does not return their status.* `slack_search_users` gives name,
+  title, email and timezone; only the profile read returns the status field. An agent that
+  stops at the search will correctly observe no status anywhere and wrongly conclude Slack
+  cannot provide one.
+- *The tool name depends on which Slack MCP is connected* — bare
+  (`slack_read_user_profile`) under the Slack plugin, prefixed
+  (`slack__slack_read_user_profile`) under the MintMCP bundle. An automation holding only one
+  of them will not find the other name. The prompt therefore tells the agent to look for the
+  capability under both, and to report *which* name was missing rather than declaring the
+  capability absent.
+
+**Why not read Google Calendar directly.** It is the tempting answer, because the calendar
+holds real start and end dates while a Slack status often carries none. It was measured and
+rejected: the MCP tool returns a colleague's events in full — titles, descriptions,
+attendees, locations — but does **not** expose Google's native `outOfOffice` event type, so
+detection still comes down to matching "OOO"/"PTO" in the title. That is the same heuristic
+the Slack status gives, bought at the cost of reading everyone's meetings. And the Slack
+status is already a projection of that same calendar (it renders as "… • Google Calendar"),
+so the privacy-minimal source and the invasive one are reading the same underlying fact.
+
 **Privacy.** The handoff page is committed to git, so anything written there is
 permanent and in every clone. The prompt therefore records only **who** is out and
 **which dates** — never the reason, the leave type, a verbatim Slack status, or any
