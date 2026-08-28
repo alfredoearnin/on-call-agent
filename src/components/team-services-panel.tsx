@@ -193,6 +193,12 @@ export function ServiceRow({
           Inventory assigns this to {service.handoffTarget}.
         </p>
       )}
+      {service.sheetRecommendation && (
+        <p className="mt-1 text-[11px] leading-snug text-warn">
+          Inventory is undecided — its recommendation column still says{" "}
+          {service.sheetRecommendation}
+        </p>
+      )}
       {service.note && (
         <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
           {service.note}

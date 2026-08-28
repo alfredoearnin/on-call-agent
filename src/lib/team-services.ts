@@ -72,6 +72,16 @@ export interface TeamService {
   /** Team the sheet names as the hand-off target (only when intent is "hand-off"). */
   handoffTarget?: string;
   /**
+   * The inventory's `Recommendation` column, verbatim, and set only when it
+   * disagrees with that row's `Hand Over?` column — `Keep?` beside `Yes`.
+   *
+   * `sheetIntent` has to pick one value, and it follows `Hand Over?`. Recording
+   * the losing column keeps the row honest: the sheet is the authority on intent,
+   * so where the sheet is undecided the dashboard says so instead of presenting
+   * the team's open question as a settled decision.
+   */
+  sheetRecommendation?: string;
+  /**
    * Cortex `owningTeamTags`, verified 2026-08-25.
    * An empty array means the tag was not found in the Cortex catalog at all.
    */
@@ -405,6 +415,7 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     domain: "activation",
     sheetIntent: "hand-off",
     handoffTarget: "Cashout",
+    sheetRecommendation: "Keep?",
     cortexOwners: ["L3-PENG-Activation"],
     note: "Separately: dev-cluster OOM pages prod Growth on-call, which is a monitor routing leak to fix regardless of ownership.",
   },
@@ -413,6 +424,7 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     domain: "activation",
     sheetIntent: "hand-off",
     handoffTarget: "Cashout",
+    sheetRecommendation: "Keep?",
     cortexOwners: ["L3-PENG-Activation"],
     note: "The catalog previously carried this as job-deactivated-user-processor, which is not a real tag.",
   },

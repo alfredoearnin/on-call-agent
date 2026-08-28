@@ -187,6 +187,26 @@ describe("GROWTH_TEAM_SERVICES", () => {
     }
   });
 
+  /**
+   * The field exists to expose a sheet that argues with itself, so a value that
+   * simply restates the winning column is noise on the page.
+   */
+  it("records a recommendation only where it conflicts with the intent", () => {
+    for (const svc of GROWTH_TEAM_SERVICES) {
+      if (!svc.sheetRecommendation) continue;
+      assert.equal(
+        svc.sheetIntent,
+        "hand-off",
+        `${svc.name} flags a conflicting recommendation but is not a hand-off`,
+      );
+      assert.doesNotMatch(
+        svc.sheetRecommendation,
+        /^hand-off$/i,
+        `${svc.name} restates its own intent instead of the losing column`,
+      );
+    }
+  });
+
   it("never claims Growth ownership without a Cortex tag to back it", () => {
     for (const svc of servicesByVerdict("corroborated")) {
       assert.ok(
