@@ -60,10 +60,10 @@ function alertIdFrom(text: string): string | undefined {
 /**
  * When an alert fired, read out of the finding prose.
  *
- * The pages never write ISO dates for alert times. Surveying the corpus, they
- * write `Aug 7 15:00 UTC`, `Fri Jul 31 18:23 PT`, `~2:18 AM PT Thu Aug 20`, or
- * just `Mon Aug 17` with no clock time at all — and crucially both UTC and PT
- * appear, 7 hours apart, so flattening them into the team zone is a real error.
+ * The pages write `Aug 7 15:00 UTC`, `Fri Jul 31 18:23 PT`, `~2:18 AM PT Thu Aug
+ * 20`, `2026-08-26 16:53 UTC`, or just `Mon Aug 17` with no clock time at all —
+ * and crucially both UTC and PT appear, 7 hours apart, so flattening them into
+ * the team zone is a real error.
  *
  * Two rules carry the honesty here:
  *
@@ -94,7 +94,8 @@ const MONTHS: Record<string, number> = {
 /** Zone abbreviations the pages use. PT/PST/PDT resolve via the team zone. */
 const UTC_LABEL = /^(utc|gmt|z)$/i;
 
-const ISO_AT = /(\d{4}-\d{2}-\d{2})(?:[\sT]{1,3}(\d{1,2}):(\d{2}))?/;
+const ISO_AT =
+  /(\d{4}-\d{2}-\d{2})(?:[\sT]{1,3}(\d{1,2}):(\d{2}))?(?:\s{0,3}(utc|gmt|z)\b)?/i;
 /** `Aug 20 09:17 UTC`, `Fri Jul 31 18:23 PT`, `Mon Aug 17` */
 const MONTH_DAY_AT = new RegExp(
   String.raw`(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]{0,6}\s{1,3})?` +
@@ -138,7 +139,13 @@ function matchAny(
 ): ParsedEventTime | undefined {
   const iso = ISO_AT.exec(flat);
   if (iso) {
-    const zone = tz;
+    // Rule 1 above applies here too. This branch used to hardcode the team zone,
+    // so `2026-08-26 16:53 UTC` was read as 16:53 PT and stored seven hours late.
+    // A label with no clock time is ignored on purpose: UTC midnight is the
+    // previous evening in the team zone, so honouring it would move a bare date
+    // to the wrong day — and rule 2 only promises the day, not a time.
+    const labelled = Boolean(iso[2]) && Boolean(iso[4]) && UTC_LABEL.test(iso[4]);
+    const zone = labelled ? "utc" : tz;
     const dt = iso[2]
       ? DateTime.fromISO(`${iso[1]}T${iso[2].padStart(2, "0")}:${iso[3]}`, { zone })
       : DateTime.fromISO(iso[1], { zone }).startOf("day");

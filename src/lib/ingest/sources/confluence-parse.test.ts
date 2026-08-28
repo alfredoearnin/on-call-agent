@@ -760,6 +760,34 @@ describe("parseEventTime", () => {
     assert.equal(t?.timeKnown, true);
   });
 
+  // The pages started writing ISO stamps in alert findings, and this branch was
+  // flattening them into the team zone: an alert that paged at 16:53 UTC was
+  // stored as 23:53 UTC and rendered seven hours late.
+  it("reads an ISO time marked UTC as UTC, not as team-local", () => {
+    const t = parse("monitor 135119948 fired at 2026-08-20 16:53 UTC on prod");
+
+    assert.equal(t?.at.toISOString(), "2026-08-20T16:53:00.000Z");
+    assert.equal(t?.zone, "utc");
+  });
+
+  it("reads an unlabelled ISO time in the team zone", () => {
+    const t = parse("monitor 135119948 fired at 2026-08-20 16:53 on prod");
+
+    assert.equal(t?.at.toISOString(), "2026-08-20T23:53:00.000Z");
+    assert.equal(t?.zone, TZ);
+  });
+
+  it("keeps a bare ISO date at team-local midnight even when a zone follows", () => {
+    const t = parse("carried since 2026-08-20 UTC with no clock time");
+
+    assert.equal(t?.timeKnown, false);
+    assert.equal(
+      DateTime.fromJSDate(t!.at, { zone: TZ }).toISODate(),
+      "2026-08-20",
+      "a labelled date with no time must not shift the day",
+    );
+  });
+
   it("reports the day without a time when the page states only a date", () => {
     const t = parse("the OTGE containers-not-ready fire on Mon Aug 17 was un-paged");
 
