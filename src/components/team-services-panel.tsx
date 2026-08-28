@@ -190,7 +190,7 @@ export function ServiceRow({
       )}
       {reason === "handed-off" && service.handoffTarget && (
         <p className="mt-1 text-[11px] leading-snug text-alert">
-          Already handed off to {service.handoffTarget}.
+          Inventory assigns this to {service.handoffTarget}.
         </p>
       )}
       {service.note && (

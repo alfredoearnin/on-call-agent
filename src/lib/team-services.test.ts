@@ -153,6 +153,15 @@ describe("dropReasonFor", () => {
       assert.ok(DROP_REASON_LABELS[reason], `no label for ${reason}`);
     }
   });
+
+  /**
+   * The inventory column is `Hand Over? (Y/N)` — an intent. Wording that reads as
+   * a completed transfer invites someone to stop answering a page that still
+   * routes to Growth, which is the opposite of what the sheet supports.
+   */
+  it("does not word the hand-off label as a finished transfer", () => {
+    assert.doesNotMatch(DROP_REASON_LABELS["handed-off"], /already|was handed/i);
+  });
 });
 
 describe("GROWTH_TEAM_SERVICES", () => {
@@ -173,7 +182,7 @@ describe("GROWTH_TEAM_SERVICES", () => {
       if (svc.sheetIntent !== "hand-off") continue;
       assert.ok(
         svc.handoffTarget,
-        `${svc.name} is handed off but names no receiving team`,
+        `${svc.name} is marked for hand-off but names no receiving team`,
       );
     }
   });

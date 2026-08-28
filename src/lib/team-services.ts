@@ -49,7 +49,10 @@ export type OwnershipVerdict =
 
 /** Why an unsupported entry should leave the on-call scope. */
 export type DropReason =
-  /** The team already agreed to hand it to another team. */
+  /**
+   * The inventory marks it for transfer to another team. The sheet's column is
+   * `Hand Over? (Y/N)` — an intent — so this never means the transfer happened.
+   */
   | "handed-off"
   /** Slated for deletion, not transfer. */
   | "deprecated"
@@ -514,7 +517,7 @@ export function dropReasonFor(service: TeamService): DropReason | undefined {
 }
 
 export const DROP_REASON_LABELS: Record<DropReason, string> = {
-  "handed-off": "Already handed off",
+  "handed-off": "Marked for hand-off",
   deprecated: "Slated for deletion",
   "unknown-tag": "Tag does not exist",
   "other-team": "Owned by another team",
