@@ -314,6 +314,15 @@ instead of resetting each run:
     actually supports one; hedge it (`likely …`) and name the basis. If the signals do not support a
     clear cause, write **"Cause not determined from available signals."** Never fabricate a
     plausible-sounding narrative.
+  - **A monitor that fired more than once — enumerate every firing.** A table row covers a
+    monitor, so the repeats live inside `What happened:` as `(1) <stamp> … ; (2) <stamp> …` —
+    one bare `(n)` marker per firing, each followed immediately by that firing's timestamp.
+    The dashboard reads these markers to give every page its own line in the timeline. Prose
+    like "fired twice this week" *without* the enumerated stamps collapses to one entry, which
+    undercounts how much the rotation was actually paged and contradicts the alert-volume
+    count above it.
+  - **Always label a timestamp's zone** — `2026-08-26 16:53 UTC` or `~9:53 AM PT`. An
+    unlabelled clock time is read as team-local, so an unlabelled UTC stamp lands 7 hours off.
 - **Env / cluster — be unambiguous about prod vs non-prod.** Derive env from the monitor's
   **query scope** (not the `env:` tag), and **name the actual cluster** (e.g. `dev-eks-cluster`).
   If the monitor currently reads a different state than the scope where the alert is firing
@@ -666,6 +675,8 @@ mistaken for a healthy one. This channel is the only place anyone would notice.
 ## Definitions & rules
 
 - **Fired** = transitioned to Alert/Warn in the window (currently-firing + fired-and-resolved).
+  A monitor's row must enumerate one `(n) <stamp>` marker per firing, so the markers in the
+  table and the alert-volume count above it always agree.
 - **Required Human Attention** = alert acked by oncall. **Auto-Resolved** = escalation
   cancelled / no human ack.
 - **Env** from monitor **query scope**, not the `env:` tag; always name the cluster and flag any

@@ -24,6 +24,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
   parseCoverage,
+  parseEventTime,
+  parseFiringTimes,
   parseOnCall,
   parseRefreshedAt,
   parseWindow,
@@ -96,6 +98,48 @@ describe("the canonical Health Check prompt", () => {
     );
     assert.equal(coverage?.roles[CoverageRole.Primary].state, "out_of_office");
     assert.equal(coverage?.roles[CoverageRole.Secondary].state, "available");
+  });
+
+  /**
+   * A monitor that pages twice gets one table row, so without an enumeration the
+   * page's own alert-volume count ("2 records") contradicts its timeline ("1"),
+   * and the rotation looks half as paged as it was. The prompt never asked for
+   * the markers — one page happened to write them — so this pins the instruction
+   * that makes the parser's split something other than luck.
+   */
+  it("pins the per-firing enumeration that splits a monitor's repeat pages", () => {
+    assert.ok(
+      HEALTH_CHECK.includes("(1) <stamp>"),
+      "the enumeration template is gone — a monitor that pages twice reads as one alert",
+    );
+
+    const firings = parseFiringTimes(
+      "_Observed_ — monitor 135119948 fired at **Warn** twice: (1) 2026-08-26 16:53 UTC " +
+        "— acked, resolved 17:07 UTC; (2) 2026-08-27 03:23 UTC — acked, resolved 03:32 UTC.",
+      {
+        tz: TZ,
+        window: {
+          start: new Date("2026-08-25T17:00:00.000Z"),
+          end: new Date("2026-09-01T17:00:00.000Z"),
+        },
+      },
+    );
+
+    assert.deepEqual(
+      firings.map((f) => f.at.toISOString()),
+      ["2026-08-26T16:53:00.000Z", "2026-08-27T03:23:00.000Z"],
+    );
+  });
+
+  it("pins the zone label that keeps a UTC stamp out of the team zone", () => {
+    assert.ok(
+      HEALTH_CHECK.includes("Always label a timestamp's zone"),
+      "the zone-label rule is gone — an unlabelled UTC stamp lands 7 hours off",
+    );
+
+    const t = parseEventTime("fired at 2026-08-26 16:53 UTC", { tz: TZ });
+
+    assert.equal(t?.at.toISOString(), "2026-08-26T16:53:00.000Z");
   });
 
   it("pins the on-call week window that scopes every page", () => {
