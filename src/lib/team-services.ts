@@ -15,6 +15,12 @@
  * eight services to Growth in total, so most of those assertions named a tag that
  * does not exist. Intent and record are separate facts and are stored separately
  * here; `verdictFor()` derives the disagreement instead of hardcoding a winner.
+ *
+ * The sheet is the authority on intent and outranks any audit summarising it. On
+ * 2026-08-27 every sheet row was re-read against this file: the transcribed
+ * intents and targets all held, `service-neobank` was missing, and two rows turn
+ * out to contradict themselves (see `sheetRecommendation`). Cortex was re-checked
+ * only for `service-neobank` and the two payroll processors.
  */
 
 import { OwnershipAction } from "@/lib/constants";
@@ -435,6 +441,14 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     handoffTarget: "Cashout",
     cortexOwners: ["L3-PENG-Activation"],
     note: "The catalog previously carried this as job-deactivated-user-cashout-status, which is not a real tag.",
+  },
+  {
+    name: "service-neobank",
+    domain: "payroll",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Tier 1. The sheet's Argo manifest-key mismatch is real: ArgoCD deploys it as service-neobank-neobank while the Cortex and Datadog tag is service-neobank, so searches by tag miss its deployments.",
   },
   {
     name: "job-bank-transactions-neobank-processor",
