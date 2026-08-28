@@ -618,7 +618,9 @@ export function actionsFor(service: TeamService): OwnershipActionOption[] {
           action: OwnershipAction.HandOff,
           label: `Hand off to ${service.handoffTarget}`,
           targetTeam: service.handoffTarget,
-          rationale: `The inventory already assigns this to ${service.handoffTarget}.`,
+          rationale: service.sheetRecommendation
+            ? `The inventory names ${service.handoffTarget} as the target, but its recommendation column still says ${service.sheetRecommendation} — settle that with the team first.`
+            : `The inventory names ${service.handoffTarget} as the target; the transfer itself is not recorded anywhere yet.`,
         },
         keep,
       ];
