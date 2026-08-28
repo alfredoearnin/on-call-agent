@@ -7,6 +7,7 @@ import { Coverage, CoverageRole, PageState } from "@/lib/constants";
 import {
   parseCoverage,
   parseEventTime,
+  parseFiringTimes,
   parseOnCall,
   parsePageState,
   parseRefreshedAt,
@@ -813,6 +814,86 @@ describe("parseEventTime", () => {
     assert.ok(
       Date.now() - started < 1_000,
       `parseEventTime took ${Date.now() - started}ms on adversarial input`,
+    );
+  });
+});
+
+describe("parseFiringTimes", () => {
+  const WINDOW = {
+    start: new Date("2026-08-25T17:00:00.000Z"),
+    end: new Date("2026-09-01T17:00:00.000Z"),
+  };
+  const parse = (text: string, window = WINDOW) =>
+    parseFiringTimes(text, { tz: TZ, window });
+
+  // The finding a real page wrote for a monitor that paged twice in one week.
+  const TWICE =
+    "_Observed_ — High-priority monitor 135119948 fired at **Warn** twice, both at " +
+    "a replicas ratio ≈ 80.7%, on **prod**: (1) 2026-08-26 16:53 UTC (~9:53 AM PT, " +
+    "working hours) — acked by Alfred in ~30 s, resolved 17:07 UTC (~14 min); " +
+    "(2) 2026-08-27 03:23 UTC (~8:23 PM PT Wed — late evening PT) — acked by " +
+    "Alfred in ~10 s, resolved 03:32 UTC (~9 min). No incident promoted.";
+
+  it("returns one entry per enumerated firing, in page order", () => {
+    const firings = parse(TWICE);
+
+    assert.deepEqual(
+      firings.map((f) => f.at.toISOString()),
+      ["2026-08-26T16:53:00.000Z", "2026-08-27T03:23:00.000Z"],
+    );
+  });
+
+  it("does not count the ack and resolution times inside a clause", () => {
+    assert.equal(parse(TWICE).length, 2, "four stamps are present, two are firings");
+  });
+
+  it("reports nothing to split when the finding describes a single firing", () => {
+    const once =
+      "_Observed_ — monitor 313314019 fired at 2026-08-26 09:17 UTC, acked in ~2 min, " +
+      "resolved 09:31 UTC. Cause not determined from available signals.";
+
+    assert.deepEqual(parse(once), [], "callers keep their one-row-one-alert path");
+  });
+
+  it("drops an enumerated stamp that falls outside the on-call week", () => {
+    const firings = parse(
+      "fired twice: (1) 2026-08-26 16:53 UTC — acked; (2) 2026-08-19 04:10 UTC " +
+        "(quoted from the prior week as evidence) — acked.",
+    );
+
+    assert.deepEqual(
+      firings.map((f) => f.at.toISOString()),
+      ["2026-08-26T16:53:00.000Z"],
+      "evidence about an earlier week must not become this week's firing",
+    );
+  });
+
+  it("ignores parenthesised prose that carries no timestamp", () => {
+    assert.deepEqual(
+      parse(
+        "fired at 2026-08-26 16:53 UTC (see the Ledger) (per the runbook) — acked " +
+          "by Alfred, resolved 17:07 UTC.",
+      ),
+      [],
+    );
+  });
+
+  it("collapses two markers that name the same instant", () => {
+    const firings = parse(
+      "fired: (1) 2026-08-26 16:53 UTC — acked; (2) 2026-08-26 16:53 UTC — same page.",
+    );
+
+    assert.equal(firings.length, 1);
+  });
+
+  it("stays fast on input built to trigger regex backtracking", () => {
+    const started = Date.now();
+    parse(`(1) ${" ".repeat(6_000)} 2026-08-26 16:53 UTC`);
+    parse("(1) 2026-08-26 16:53 UTC; ".repeat(2_000));
+
+    assert.ok(
+      Date.now() - started < 1_000,
+      `parseFiringTimes took ${Date.now() - started}ms on adversarial input`,
     );
   });
 });

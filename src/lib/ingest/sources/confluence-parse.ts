@@ -114,6 +114,11 @@ const TIME_FIRST = new RegExp(
 const FIRED_CUE = /fired(?:\s{1,3}(?:at|on))?\s{0,3}/i;
 const CUE_WINDOW = 60;
 
+/** `(1)`, `(2)` — how a finding enumerates a monitor's repeat firings. */
+const FIRING_MARKER = /\((?:\d{1,2})\)\s{0,3}/g;
+/** A marker's stamp sits at the head of its clause; enough room for `2026-08-26 16:53 UTC`. */
+const MARKER_WINDOW = 34;
+
 export function parseEventTime(
   text: string,
   opts: { tz: string; window?: { start: Date; end: Date } },
@@ -130,6 +135,43 @@ export function parseEventTime(
     if (hit) return hit;
   }
   return matchAny(flat, tz, window);
+}
+
+/**
+ * Every firing a finding enumerates, in page order.
+ *
+ * A monitor that pages twice gets ONE row in the page's table, so reading a row as
+ * a single alert drops every firing after the first — the page's own count said "2
+ * records" while the timeline showed one. The repeats are enumerated as
+ * `(1) <stamp> …; (2) <stamp> …`, the only per-firing structure the pages carry.
+ *
+ * Deliberately narrow, because the alternative is inventing pages that never
+ * happened: a marker counts only when a timestamp follows it closely, only bare
+ * `(n)` counts as a marker, and stamps outside the on-call week are dropped so
+ * evidence quoted about earlier weeks cannot become this week's firings. Returns
+ * fewer than two entries when the finding describes a single firing, which is the
+ * signal for callers to keep their existing one-row-one-alert behaviour.
+ */
+export function parseFiringTimes(
+  text: string,
+  opts: { tz: string; window?: { start: Date; end: Date } },
+): ParsedEventTime[] {
+  const { tz, window } = opts;
+  const flat = text.replace(/\s+/g, " ");
+  const out: ParsedEventTime[] = [];
+  const seen = new Set<number>();
+
+  for (const marker of flat.matchAll(FIRING_MARKER)) {
+    const from = (marker.index ?? 0) + marker[0].length;
+    const hit = matchAny(flat.slice(from, from + MARKER_WINDOW), tz, window);
+    if (!hit) continue;
+    if (window && (hit.at < window.start || hit.at > window.end)) continue;
+    const instant = hit.at.getTime();
+    if (seen.has(instant)) continue;
+    seen.add(instant);
+    out.push(hit);
+  }
+  return out;
 }
 
 function matchAny(
@@ -851,6 +893,35 @@ function firedAtFrom(
   };
 }
 
+/**
+ * One record per firing when the finding enumerates repeats, else the single record
+ * the page's row describes.
+ *
+ * The first firing keeps the row's own id: ids are the idempotency key for the
+ * alert upsert and nothing prunes records that stop appearing, so minting a fresh
+ * id for firing one would leave the previously stored row behind as a phantom
+ * alert. Later firings take a suffix, stable as long as the page keeps them in
+ * order.
+ */
+function perFiring(
+  base: Omit<NormalizedAlert, "id" | "firedAt" | "firedAtTimeKnown">,
+  id: string,
+  finding: string,
+  tz: string,
+  window?: { start: Date; end: Date },
+): NormalizedAlert[] {
+  const firings = parseFiringTimes(finding, { tz, window });
+  if (firings.length < 2) {
+    return [{ ...base, id, ...firedAtFrom(finding, tz, window) }];
+  }
+  return firings.map((f, i) => ({
+    ...base,
+    id: i === 0 ? id : `${id}#${i + 1}`,
+    firedAt: f.at,
+    firedAtTimeKnown: f.timeKnown,
+  }));
+}
+
 function parseRequiredAttention(
   md: string,
   tz: string,
@@ -865,20 +936,26 @@ function parseRequiredAttention(
     const monitorId = monitorIdFrom(alertCell);
     const id = alertIdFrom(alertCell) ?? `cf-rha-${monitorId ?? clean(alertCell).slice(0, 12)}`;
     const finding = clean(findingCell);
-    out.push({
-      id,
-      monitorId,
-      source: "confluence",
-      title: clean(alertCell).replace(/^Monitor\s*\d+\s*[—-]?\s*/i, "").trim() || "Alert",
-      priority: /high/i.test(priorityCell) ? Priority.High : Priority.Low,
-      status: /resolved|self-resolved|auto-resolved/i.test(finding) ? "resolved" : "firing",
-      disposition: AlertDisposition.RequiredHumanAttention,
-      firingKind: FiringKind.Resolved,
-      ...firedAtFrom(finding, tz, window),
-      env: clean(serviceCell) || undefined,
-      timesFired: 1,
-      finding,
-    });
+    out.push(
+      ...perFiring(
+        {
+          monitorId,
+          source: "confluence",
+          title: clean(alertCell).replace(/^Monitor\s*\d+\s*[—-]?\s*/i, "").trim() || "Alert",
+          priority: /high/i.test(priorityCell) ? Priority.High : Priority.Low,
+          status: /resolved|self-resolved|auto-resolved/i.test(finding) ? "resolved" : "firing",
+          disposition: AlertDisposition.RequiredHumanAttention,
+          firingKind: FiringKind.Resolved,
+          env: clean(serviceCell) || undefined,
+          timesFired: 1,
+          finding,
+        },
+        id,
+        finding,
+        tz,
+        window,
+      ),
+    );
   }
   return out;
 }
@@ -900,19 +977,25 @@ function parseBulletAlerts(
     const monitorId = monitorIdFrom(text);
     const id = alertIdFrom(text);
     if (!id && !monitorId) continue;
-    out.push({
-      id: id ?? `cf-${firingKind}-${monitorId}`,
-      monitorId,
-      source: "confluence",
-      title: text.slice(0, 140),
-      priority: /high/i.test(text) ? Priority.High : Priority.Low,
-      status: firingKind === FiringKind.Stale ? "firing" : "resolved",
-      disposition: disposition as NormalizedAlert["disposition"],
-      firingKind: firingKind as NormalizedAlert["firingKind"],
-      ...firedAtFrom(text, tz, window),
-      timesFired: 1,
-      finding: text,
-    });
+    out.push(
+      ...perFiring(
+        {
+          monitorId,
+          source: "confluence",
+          title: text.slice(0, 140),
+          priority: /high/i.test(text) ? Priority.High : Priority.Low,
+          status: firingKind === FiringKind.Stale ? "firing" : "resolved",
+          disposition: disposition as NormalizedAlert["disposition"],
+          firingKind: firingKind as NormalizedAlert["firingKind"],
+          timesFired: 1,
+          finding: text,
+        },
+        id ?? `cf-${firingKind}-${monitorId}`,
+        text,
+        tz,
+        window,
+      ),
+    );
   }
   return out;
 }
