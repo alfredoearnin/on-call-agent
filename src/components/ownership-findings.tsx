@@ -11,7 +11,7 @@ import {
 } from "@/lib/team-services";
 import type { OwnershipDecisionRef, ServiceMonitorRef } from "@/lib/queries";
 
-/** Ordered worst-first: an entry we already gave away is more urgent than a bad tag. */
+/** Ordered worst-first: an entry we promised away is more urgent than a bad tag. */
 const REASON_ORDER: DropReason[] = [
   "handed-off",
   "deprecated",
@@ -21,7 +21,7 @@ const REASON_ORDER: DropReason[] = [
 
 const REASON_DETAIL: Record<DropReason, string> = {
   "handed-off":
-    "The ownership inventory already assigns these to another team. Any monitor still routing here pages Growth for work Growth agreed to stop doing.",
+    "The ownership inventory names another team as the target. Nothing here says the transfer happened — Cortex still records the old owner — so a monitor still routing to Growth pages the rotation for work the team means to give away.",
   deprecated:
     "Slated for deletion rather than transfer. Monitors on these should be removed with the service.",
   "other-team":

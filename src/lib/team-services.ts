@@ -15,6 +15,12 @@
  * eight services to Growth in total, so most of those assertions named a tag that
  * does not exist. Intent and record are separate facts and are stored separately
  * here; `verdictFor()` derives the disagreement instead of hardcoding a winner.
+ *
+ * The sheet is the authority on intent and outranks any audit summarising it. On
+ * 2026-08-27 every sheet row was re-read against this file: the transcribed
+ * intents and targets all held, `service-neobank` was missing, and two rows turn
+ * out to contradict themselves (see `sheetRecommendation`). Cortex was re-checked
+ * only for `service-neobank` and the two payroll processors.
  */
 
 import { OwnershipAction } from "@/lib/constants";
@@ -49,7 +55,10 @@ export type OwnershipVerdict =
 
 /** Why an unsupported entry should leave the on-call scope. */
 export type DropReason =
-  /** The team already agreed to hand it to another team. */
+  /**
+   * The inventory marks it for transfer to another team. The sheet's column is
+   * `Hand Over? (Y/N)` — an intent — so this never means the transfer happened.
+   */
   | "handed-off"
   /** Slated for deletion, not transfer. */
   | "deprecated"
@@ -68,6 +77,16 @@ export interface TeamService {
   sheetIntent: SheetIntent;
   /** Team the sheet names as the hand-off target (only when intent is "hand-off"). */
   handoffTarget?: string;
+  /**
+   * The inventory's `Recommendation` column, verbatim, and set only when it
+   * disagrees with that row's `Hand Over?` column — `Keep?` beside `Yes`.
+   *
+   * `sheetIntent` has to pick one value, and it follows `Hand Over?`. Recording
+   * the losing column keeps the row honest: the sheet is the authority on intent,
+   * so where the sheet is undecided the dashboard says so instead of presenting
+   * the team's open question as a settled decision.
+   */
+  sheetRecommendation?: string;
   /**
    * Cortex `owningTeamTags`, verified 2026-08-25.
    * An empty array means the tag was not found in the Cortex catalog at all.
@@ -402,6 +421,7 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     domain: "activation",
     sheetIntent: "hand-off",
     handoffTarget: "Cashout",
+    sheetRecommendation: "Keep?",
     cortexOwners: ["L3-PENG-Activation"],
     note: "Separately: dev-cluster OOM pages prod Growth on-call, which is a monitor routing leak to fix regardless of ownership.",
   },
@@ -410,6 +430,7 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     domain: "activation",
     sheetIntent: "hand-off",
     handoffTarget: "Cashout",
+    sheetRecommendation: "Keep?",
     cortexOwners: ["L3-PENG-Activation"],
     note: "The catalog previously carried this as job-deactivated-user-processor, which is not a real tag.",
   },
@@ -420,6 +441,14 @@ export const GROWTH_TEAM_SERVICES: TeamService[] = [
     handoffTarget: "Cashout",
     cortexOwners: ["L3-PENG-Activation"],
     note: "The catalog previously carried this as job-deactivated-user-cashout-status, which is not a real tag.",
+  },
+  {
+    name: "service-neobank",
+    domain: "payroll",
+    sheetIntent: "hand-off",
+    handoffTarget: "FIP / Payroll",
+    cortexOwners: ["L3-PENG-Activation"],
+    note: "Tier 1. The sheet's Argo manifest-key mismatch is real: ArgoCD deploys it as service-neobank-neobank while the Cortex and Datadog tag is service-neobank, so searches by tag miss its deployments.",
   },
   {
     name: "job-bank-transactions-neobank-processor",
@@ -514,7 +543,7 @@ export function dropReasonFor(service: TeamService): DropReason | undefined {
 }
 
 export const DROP_REASON_LABELS: Record<DropReason, string> = {
-  "handed-off": "Already handed off",
+  "handed-off": "Marked for hand-off",
   deprecated: "Slated for deletion",
   "unknown-tag": "Tag does not exist",
   "other-team": "Owned by another team",
@@ -589,7 +618,9 @@ export function actionsFor(service: TeamService): OwnershipActionOption[] {
           action: OwnershipAction.HandOff,
           label: `Hand off to ${service.handoffTarget}`,
           targetTeam: service.handoffTarget,
-          rationale: `The inventory already assigns this to ${service.handoffTarget}.`,
+          rationale: service.sheetRecommendation
+            ? `The inventory names ${service.handoffTarget} as the target, but its recommendation column still says ${service.sheetRecommendation} — settle that with the team first.`
+            : `The inventory names ${service.handoffTarget} as the target; the transfer itself is not recorded anywhere yet.`,
         },
         keep,
       ];

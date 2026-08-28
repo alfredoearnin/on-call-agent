@@ -153,6 +153,15 @@ describe("dropReasonFor", () => {
       assert.ok(DROP_REASON_LABELS[reason], `no label for ${reason}`);
     }
   });
+
+  /**
+   * The inventory column is `Hand Over? (Y/N)` — an intent. Wording that reads as
+   * a completed transfer invites someone to stop answering a page that still
+   * routes to Growth, which is the opposite of what the sheet supports.
+   */
+  it("does not word the hand-off label as a finished transfer", () => {
+    assert.doesNotMatch(DROP_REASON_LABELS["handed-off"], /already|was handed/i);
+  });
 });
 
 describe("GROWTH_TEAM_SERVICES", () => {
@@ -173,7 +182,27 @@ describe("GROWTH_TEAM_SERVICES", () => {
       if (svc.sheetIntent !== "hand-off") continue;
       assert.ok(
         svc.handoffTarget,
-        `${svc.name} is handed off but names no receiving team`,
+        `${svc.name} is marked for hand-off but names no receiving team`,
+      );
+    }
+  });
+
+  /**
+   * The field exists to expose a sheet that argues with itself, so a value that
+   * simply restates the winning column is noise on the page.
+   */
+  it("records a recommendation only where it conflicts with the intent", () => {
+    for (const svc of GROWTH_TEAM_SERVICES) {
+      if (!svc.sheetRecommendation) continue;
+      assert.equal(
+        svc.sheetIntent,
+        "hand-off",
+        `${svc.name} flags a conflicting recommendation but is not a hand-off`,
+      );
+      assert.doesNotMatch(
+        svc.sheetRecommendation,
+        /^hand-off$/i,
+        `${svc.name} restates its own intent instead of the losing column`,
       );
     }
   });
