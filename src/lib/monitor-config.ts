@@ -92,7 +92,9 @@ export function diffMonitorConfig(
   prev: MonitorConfigFields,
   next: MonitorConfigFields,
 ): FieldDiff[] {
-  if (hasNoDatadogConfig(prev)) return [];
+  // Either direction is a source artefact: moving into a config-less snapshot
+  // means the sync could not read Datadog, not that a query was deleted.
+  if (hasNoDatadogConfig(prev) || hasNoDatadogConfig(next)) return [];
 
   const pairs: { field: MonitorConfigField; before: unknown; after: unknown }[] =
     [

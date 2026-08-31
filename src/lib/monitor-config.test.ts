@@ -94,6 +94,14 @@ describe("diffMonitorConfig", () => {
     assert.deepEqual(diffs, []);
   });
 
+  it("ignores a snapshot that lost its config to a non-Datadog sync", () => {
+    const diffs = diffMonitorConfig(
+      { query: "avg(last_10m):a / b", message: "page", thresholds: { critical: 33 } },
+      { query: null, message: null, priority: "High" },
+    );
+    assert.deepEqual(diffs, []);
+  });
+
   it("still reports an edit when the previous snapshot held Datadog config", () => {
     const diffs = diffMonitorConfig(
       { query: "q", message: "page" },
