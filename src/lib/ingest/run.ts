@@ -17,6 +17,7 @@ import {
 } from "@/lib/ingest/sources/confluence";
 import { classifyRecommendations } from "@/lib/ingest/tuning";
 import { persistBundle } from "@/lib/ingest/persist";
+import { refreshMonitorConfigsFromDatadog } from "@/lib/ingest/refresh-monitor-configs";
 import { reconcileFeedback } from "@/lib/ingest/feedback";
 import { acquireLock, releaseLock } from "@/lib/ingest/lock";
 import type {
@@ -240,9 +241,31 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
         preserveExistingConfig: source !== "live",
       });
     }
+
+    let configRefreshNote = "";
+    let datadogFromRefresh: (typeof SourceStatus)[keyof typeof SourceStatus] | undefined;
+    if (hasDatadogRead(cfg) && source !== "demo") {
+      try {
+        const refresh = await refreshMonitorConfigsFromDatadog(run.id);
+        const auditNote =
+          refresh.audit === "forbidden"
+            ? "audit forbidden — grant audit_logs_read to the Datadog app key's user"
+            : `audit ${refresh.audit}`;
+        configRefreshNote = `monitor-config: ${refresh.snapshots} edit(s) / ${auditNote}`;
+        datadogFromRefresh = SourceStatus.OK;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        configRefreshNote = `monitor-config: unavailable (${message})`;
+        datadogFromRefresh = SourceStatus.Unavailable;
+      }
+    }
+
     const feedback = await reconcileFeedback();
 
     const newest = items[items.length - 1].bundle;
+    if (datadogFromRefresh && newest.sourceStatus.datadog === SourceStatus.Skipped) {
+      newest.sourceStatus.datadog = datadogFromRefresh;
+    }
     const anyUnavailable = Object.values(newest.sourceStatus).includes(
       SourceStatus.Unavailable,
     );
@@ -266,6 +289,7 @@ export async function runSync(opts: RunOptions = {}): Promise<RunOutcome> {
     notesParts.push(
       `feedback: ${feedback.applied} applied / ${feedback.validated} validated / ${feedback.regressed} regressed`,
     );
+    if (configRefreshNote) notesParts.push(configRefreshNote);
     notesParts.push(...warnings);
 
     await prisma.ingestionRun.update({
