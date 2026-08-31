@@ -1,7 +1,6 @@
-import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
-import { redactString } from "@/lib/redact";
+import { redactDeep, redactString } from "@/lib/redact";
 import {
   FiringKind,
   RecommendationStatus,
@@ -9,6 +8,10 @@ import {
 } from "@/lib/constants";
 import type { IngestBundle } from "@/lib/ingest/types";
 import type { OpsWindow } from "@/lib/ingest/window";
+import {
+  hashMonitorConfig,
+  thresholdsFromOptions,
+} from "@/lib/monitor-config";
 
 export interface KpiSummary {
   totalAlerts: number;
@@ -32,10 +35,6 @@ export interface PersistResult {
   alerts: number;
   incidents: number;
   recommendations: number;
-}
-
-function hashConfig(parts: (string | null | undefined)[]): string {
-  return createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 16);
 }
 
 const STATUS_RANK: Record<string, number> = {
@@ -76,7 +75,16 @@ export async function persistBundle(
   // (that's how the feedback loop observes real drift).
   for (const m of bundle.monitors) {
     const message = m.message ? redactString(m.message).value : null;
-    const hash = hashConfig([m.query, message, m.priority]);
+    // options carries escalation_message, which is notify text like `message`.
+    const options = m.options ? redactDeep(m.options).value : m.options;
+    const thresholds = m.thresholds ?? thresholdsFromOptions(options);
+    const hash = hashMonitorConfig({
+      query: m.query,
+      message,
+      priority: m.priority,
+      thresholds,
+      options,
+    });
     const existing = await prisma.monitor.findUnique({ where: { id: m.id } });
     const preserve = Boolean(opts.preserveExistingConfig && existing);
 
@@ -111,9 +119,8 @@ export async function persistBundle(
           datadogUrl: m.datadogUrl,
           envScope: m.envScope,
           cluster: m.cluster,
-          modifiedAt: m.modifiedAt,
+          modifiedAt: preserve ? existing.modifiedAt : m.modifiedAt,
           lastSeenAt: now,
-          // Config fields: keep DB values in demo (preserve applied changes).
           ...(preserve
             ? {}
             : { priority: m.priority, query: m.query, message, configHash: hash }),
@@ -127,8 +134,23 @@ export async function persistBundle(
           message: existing.message,
           priority: existing.priority,
           hash: existing.configHash ?? hash,
+          thresholds: null as string | null,
+          options: null as string | null,
         }
-      : { query: m.query, message, priority: m.priority, hash };
+      : {
+          query: m.query ?? null,
+          message,
+          priority: m.priority,
+          hash,
+          thresholds: thresholds ? JSON.stringify(thresholds) : null,
+          options: options ? JSON.stringify(options) : null,
+        };
+
+    const lastSnap = await prisma.monitorConfigSnapshot.findFirst({
+      where: { monitorId: m.id },
+      orderBy: { capturedAt: "desc" },
+    });
+    if (lastSnap?.hash === snap.hash) continue;
 
     await prisma.monitorConfigSnapshot.create({
       data: {
@@ -137,8 +159,8 @@ export async function persistBundle(
         query: snap.query,
         message: snap.message,
         priority: snap.priority,
-        thresholds: m.thresholds ? JSON.stringify(m.thresholds) : null,
-        options: m.options ? JSON.stringify(m.options) : null,
+        thresholds: snap.thresholds,
+        options: snap.options,
         hash: snap.hash,
       },
     });
