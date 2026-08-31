@@ -119,6 +119,9 @@ model MonitorConfigSnapshot {
   thresholds String? // JSON
   options    String? // JSON
   hash       String
+  /// Datadog Audit Trail actor when the ingest could read it. Name/handle only.
+  actorName  String?
+  actorAt    DateTime?
 
   @@index([monitorId, capturedAt])
 }
@@ -340,4 +343,21 @@ model OwnershipDecision {
 
   @@index([service, decidedAt])
   @@index([decidedAt])
+}
+
+/// Operator-written explanation for a detected monitor config edit.
+///
+/// Datadog does not store a reason on Save. A TuningRecommendation match is
+/// preferred; this row is only for the leftover "why". No FK to Monitor: the
+/// SQLite provider rewrites a related table on FK change, which would bloat
+/// the committed database. `afterHash` is the snapshot hash this note explains.
+model MonitorEditNote {
+  id        String   @id @default(cuid())
+  monitorId String
+  afterHash String
+  note      String
+  operator  String
+  createdAt DateTime @default(now())
+
+  @@index([monitorId, afterHash, createdAt])
 }
