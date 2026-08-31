@@ -13,8 +13,19 @@ export interface EditWhy {
   summary: string;
   coverage?: string | null;
   expectedImpact?: string | null;
-  source: "recommendation" | "apply" | "note";
+  source: "recommendation" | "apply";
   recommendationId?: string;
+}
+
+/**
+ * An operator's own explanation. Kept beside `why` rather than folded into it:
+ * a matched recommendation says what the change was meant to achieve, and the
+ * note says why it was made — one must not hide the other.
+ */
+export interface EditNote {
+  text: string;
+  operator: string;
+  at: Date;
 }
 
 export interface MonitorEdit {
@@ -30,6 +41,7 @@ export interface MonitorEdit {
   afterHash: string;
   diffs: FieldDiff[];
   why: EditWhy | null;
+  note: EditNote | null;
 }
 
 function parseJson(raw: string | null): unknown {
@@ -116,10 +128,12 @@ export async function getMonitorEdits(opts?: {
     where: opts?.monitorId ? { monitorId: opts.monitorId } : {},
     orderBy: { createdAt: "desc" },
   });
-  const noteByKey = new Map<string, (typeof notes)[0]>();
+  // Newest note per edit wins; a later one supersedes rather than appends.
+  const noteByKey = new Map<string, EditNote>();
   for (const n of notes) {
     const key = `${n.monitorId}:${n.afterHash}`;
-    if (!noteByKey.has(key)) noteByKey.set(key, n);
+    if (noteByKey.has(key)) continue;
+    noteByKey.set(key, { text: n.note, operator: n.operator, at: n.createdAt });
   }
 
   const out: MonitorEdit[] = [];
@@ -162,7 +176,8 @@ export async function getMonitorEdits(opts?: {
         actorAt: next.actorAt,
         afterHash: next.hash,
         diffs,
-        why: whyFor(monitor, fieldsFromSnap(next), noteByKey.get(`${monitor.id}:${next.hash}`), null),
+        why: whyFor(monitor, fieldsFromSnap(next)),
+        note: noteByKey.get(`${monitor.id}:${next.hash}`) ?? null,
       });
     }
 
@@ -198,7 +213,7 @@ function appliedEdit(
     recommendationId: string | null;
     operator: string;
   },
-  noteByKey: Map<string, { note: string; operator: string }>,
+  noteByKey: Map<string, EditNote>,
 ): MonitorEdit {
   const rec = monitor.recommendations.find((r) => r.id === c.recommendationId);
   const why: EditWhy | null = rec
@@ -228,6 +243,7 @@ function appliedEdit(
     afterHash: c.id,
     diffs: diffsFromApplied(c.beforeJson, c.afterJson, c.diffJson),
     why,
+    note: noteByKey.get(`${monitor.id}:${c.id}`) ?? null,
   };
 }
 
@@ -253,8 +269,6 @@ function whyFor(
     }[];
   },
   after: MonitorConfigFields,
-  note: { note: string; operator: string } | undefined,
-  applySummary: string | null,
 ): EditWhy | null {
   for (const rec of monitor.recommendations) {
     const patch: ProposedPatch | null = rec.patchJson
@@ -277,16 +291,6 @@ function whyFor(
         recommendationId: rec.id,
       };
     }
-  }
-  if (note) {
-    return {
-      title: `Note from ${note.operator}`,
-      summary: note.note,
-      source: "note",
-    };
-  }
-  if (applySummary) {
-    return { title: applySummary, summary: applySummary, source: "apply" };
   }
   return null;
 }

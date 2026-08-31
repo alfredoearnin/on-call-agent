@@ -95,12 +95,12 @@ export function MonitorEditCard({
         </div>
       ))}
 
-      <WhyBlock edit={edit} />
+      <WhyBlock edit={edit} tz={tz} />
     </article>
   );
 }
 
-function WhyBlock({ edit }: { edit: MonitorEdit }) {
+function WhyBlock({ edit, tz }: { edit: MonitorEdit; tz: string }) {
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -123,7 +123,9 @@ function WhyBlock({ edit }: { edit: MonitorEdit }) {
       {edit.why ? (
         <div className="mt-1 space-y-1 text-sm">
           <div className="font-medium">{edit.why.title}</div>
-          <p className="text-muted-foreground">{edit.why.summary}</p>
+          {edit.why.summary === edit.why.title ? null : (
+            <p className="text-muted-foreground">{edit.why.summary}</p>
+          )}
           {edit.why.coverage ? (
             <p className="text-xs text-muted-foreground">Coverage: {edit.why.coverage}</p>
           ) : null}
@@ -133,9 +135,20 @@ function WhyBlock({ edit }: { edit: MonitorEdit }) {
             </p>
           ) : null}
         </div>
-      ) : (
+      ) : null}
+
+      {edit.note ? (
+        <div className={edit.why ? "mt-3 border-t border-border/60 pt-2" : "mt-1"}>
+          <div className="text-xs text-muted-foreground">
+            Note from {edit.note.operator} · {fmtDateTime(edit.note.at, tz)}
+          </div>
+          <p className="mt-0.5 whitespace-pre-wrap text-sm">{edit.note.text}</p>
+        </div>
+      ) : null}
+
+      {!edit.why && !edit.note ? (
         <p className="mt-1 text-sm text-muted-foreground">No explanation yet.</p>
-      )}
+      ) : null}
 
       {edit.source === MonitorEditSource.DatadogDetected && (
         <div className="mt-2">
@@ -165,7 +178,7 @@ function WhyBlock({ edit }: { edit: MonitorEdit }) {
             </div>
           ) : (
             <Button type="button" size="sm" variant="secondary" onClick={() => setOpen(true)}>
-              Add explanation
+              {edit.note ? "Replace explanation" : "Add explanation"}
             </Button>
           )}
           {message ? (
