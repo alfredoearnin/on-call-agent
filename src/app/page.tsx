@@ -8,6 +8,7 @@ import {
   servicesByVerdict,
   summarizeOwnership,
 } from "@/lib/team-services";
+import { countMonitorEditsSince } from "@/lib/monitor-edits";
 import {
   getLatestRun,
   getOwnershipDecisions,
@@ -50,6 +51,8 @@ export default async function OverviewPage() {
       <EmptyState />
     );
   }
+
+  const editsThisWeek = await countMonitorEditsSince(run.windowStart);
 
   const trendPoints = series.map((r) => ({
     label: DateTime.fromJSDate(r.startedAt, { zone: tz }).toFormat("MMM d, h:mm a"),
@@ -132,6 +135,13 @@ export default async function OverviewPage() {
           label="Open recommendations"
           value={openRecs.length}
           tone={openRecs.length > 0 ? "warn" : "ok"}
+        />
+        <KpiCard
+          label="Monitor edits this week"
+          value={editsThisWeek}
+          tone={editsThisWeek > 0 ? "info" : "ok"}
+          href="/edits"
+          sub="Datadog Saves + dashboard apply"
         />
       </div>
 

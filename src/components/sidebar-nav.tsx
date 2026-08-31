@@ -10,6 +10,7 @@ import {
   Activity,
   Flame,
   Server,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +20,7 @@ const links = [
   { href: "/services", label: "Services", icon: Server },
   { href: "/carryover", label: "Carryover", icon: Flame },
   { href: "/recommendations", label: "Recommendations", icon: Wrench },
+  { href: "/edits", label: "Monitor edits", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
@@ -60,9 +62,9 @@ export function SidebarNav() {
       </nav>
 
       <div className="border-t border-border px-5 py-4 text-xs text-muted-foreground">
-        Read-only + one guarded write.
+        Read-only + guarded writes.
         <br />
-        No PII stored.
+        No customer PII stored.
       </div>
     </aside>
   );
