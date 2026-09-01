@@ -378,14 +378,23 @@ checkout that leaves the data unchanged stays quiet.
 
 ## Quick start
 
+Two commands exist, and which one you want depends on whether the clone is set
+up yet:
+
 ```bash
-npm run setup              # deps, credentials, DB, then http://localhost:3000
+npm run setup              # first time: deps, credentials, DB, then the server
+./start                    # every day after that
 ```
 
 `setup` is idempotent and walks you through it: it installs dependencies and env
 files only if they are missing, asks for the credentials that are still empty,
 applies migrations, and starts the dev server. Answer nothing and the dashboard
 runs on bundled sample data — no credentials required.
+
+`./start` deliberately does no setup. It checks that the clone is ready and, if
+it is not, tells you to run `npm run setup` instead of failing with a stack
+trace. `npm run dev` and `npm run start` get the same check through npm's
+`predev` and `prestart` hooks, so any of the three is safe to type first.
 
 It asks in tiers. Datadog first, since that is what takes the dashboard off demo
 data, and the key pair is verified against the API before continuing. incident.io
@@ -401,21 +410,18 @@ not — set those two by hand.
 
 ```bash
 npm run setup:prod                  # build + production server instead of dev
-bash scripts/start.sh --sync        # also reseed and pull fresh data
-bash scripts/start.sh --no-prompt   # never ask (CI); use whatever is configured
-bash scripts/start.sh --no-server   # configure only, do not launch
-bash scripts/start.sh --help
+./start --prod                      # same, without re-running setup
+bash scripts/setup.sh --sync        # also reseed and pull fresh data
+bash scripts/setup.sh --no-prompt   # never ask (CI); use whatever is configured
+bash scripts/setup.sh --no-server   # set up only, do not launch
+bash scripts/setup.sh --check       # verify prerequisites only
+bash scripts/setup.sh --help
 ```
 
-The two underlying scripts remain usable on their own — `scripts/install.sh` owns
-dependencies and env files, `scripts/init.sh` owns seeding and the first sync:
-
-```bash
-bash scripts/install.sh    # deps + local env files
-# (optional) edit .env.local to add API keys; Confluence/demo need none
-bash scripts/init.sh       # create + seed the SQLite memory DB, run a first sync
-npm run dev                # http://localhost:3000
-```
+Configuring is always optional, and there is no state where you *must* configure
+before starting: with `DEMO_MODE=true` the dashboard runs on bundled sample data.
+What is mandatory is installing — dependencies, `.env` with `DATABASE_URL`, and a
+generated Prisma client — which is exactly what `--check` looks for.
 
 The dashboard reads the DB live, so after a `git pull` (or a local `npm run ingest`)
 just refresh the browser — no restart needed.
@@ -567,17 +573,16 @@ person — so the audit trail records *that* a change happened, not who made it.
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the dashboard (dev). |
+| `npm run setup` | First run: deps, credentials, DB, then the dev server. |
+| `npm run setup:prod` | Same, but build + serve production. |
+| `./start` | Everyday launch. Refuses to start until setup has run. |
+| `npm run dev` | Start the dashboard (dev). Prerequisite-checked via `predev`. |
 | `npm run build` / `npm run start` | Production build / serve. |
 | `npm run ingest` | Run one sync now (re-parses the local source). |
 | `npm test` | Run the parser regression tests (`node --test`). |
 | `npm run scheduler` | Start the automatic local sync worker. |
 | `npm run seed` | Seed defaults + sample memory (idempotent). |
 | `npm run prisma:migrate` | Create/apply a schema migration (dev). |
-| `npm run setup` | Clone to running dashboard: deps, credentials, DB, dev server. |
-| `npm run setup:prod` | Same, but build + serve production. |
-| `bash scripts/install.sh` | One-time setup. |
-| `bash scripts/init.sh` | Initialize DB + first sync. |
 
 ---
 
@@ -602,8 +607,8 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
 
 ## Troubleshooting
 
-- **`DATABASE_URL` not found** — run `bash scripts/install.sh` (creates `.env`).
-- **Empty dashboard** — run `bash scripts/init.sh` or `npm run ingest`.
+- **`DATABASE_URL` not found** — run `npm run setup` (creates `.env`).
+- **Empty dashboard** — run `bash scripts/setup.sh --sync` or `npm run ingest`.
 - **Dashboard looks stale** — it only reflects the committed memory. Click
   **Refresh from source** (runs `git pull`) to pull the latest that the daily
   automation pushed to `main`; **Sync now** only re-parses the local
