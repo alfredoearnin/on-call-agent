@@ -8,6 +8,7 @@ import {
   AutomationKey,
   FiringKind,
   IncidentClass,
+  RecommendationStatus,
   RunStatus,
   TriggerStatus,
 } from "@/lib/constants";
@@ -265,6 +266,19 @@ const STATUS_ORDER: Record<string, number> = {
   validated: 5,
   resolved: 6,
 };
+
+/**
+ * True when the recommended change is already in place, so the card asks
+ * nothing of the operator. `regressed` is excluded on purpose: that change did
+ * land, but the noise came back, which is a fresh call to action.
+ */
+export function isSettledRecommendation(status: string): boolean {
+  return (
+    status === RecommendationStatus.Applied ||
+    status === RecommendationStatus.Validated ||
+    status === RecommendationStatus.Resolved
+  );
+}
 
 export async function getRecommendations() {
   const recs = await prisma.tuningRecommendation.findMany({

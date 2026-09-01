@@ -1,5 +1,6 @@
+import { ChevronRight } from "lucide-react";
 import { getConfig, canApply } from "@/lib/config";
-import { getRecommendations } from "@/lib/queries";
+import { getRecommendations, isSettledRecommendation } from "@/lib/queries";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { Badge } from "@/components/ui/badge";
 
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 export default async function RecommendationsPage() {
   const cfg = getConfig();
   const recs = await getRecommendations();
+  const active = recs.filter((r) => !isSettledRecommendation(r.status));
+  const settled = recs.filter((r) => isSettledRecommendation(r.status));
   const applyMode: "real" | "demo" | "blocked" = canApply(cfg)
     ? "real"
     : cfg.demoMode
@@ -52,16 +55,30 @@ export default async function RecommendationsPage() {
         </div>
       )}
 
-      {recs.length === 0 ? (
+      {active.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No tuning changes recommended. ✓
         </p>
       ) : (
         <div className="space-y-4">
-          {recs.map((rec) => (
+          {active.map((rec) => (
             <RecommendationCard key={rec.id} rec={rec} applyMode={applyMode} />
           ))}
         </div>
+      )}
+
+      {settled.length > 0 && (
+        <details className="group">
+          <summary className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-foreground/80 hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            Already applied ({settled.length})
+          </summary>
+          <div className="mt-4 space-y-4">
+            {settled.map((rec) => (
+              <RecommendationCard key={rec.id} rec={rec} applyMode={applyMode} />
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );
