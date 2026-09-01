@@ -14,8 +14,10 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
-    "init": "bash scripts/init.sh",
-    "install:app": "bash scripts/install.sh"
+    "setup": "bash scripts/setup.sh",
+    "setup:prod": "bash scripts/setup.sh --prod",
+    "predev": "bash scripts/setup.sh --check",
+    "prestart": "bash scripts/setup.sh --check"
   },
   "prisma": {
     "seed": "tsx scripts/seed.ts"

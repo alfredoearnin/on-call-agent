@@ -28,6 +28,9 @@ yarn-error.log*
 .env.*.local
 .env.development
 .env.production
+# scripts/setup.sh stages credential edits here before an atomic rename. It is
+# removed on exit, including on Ctrl-C, but an ignore keeps a kill -9 harmless.
+.env.local.tmp
 
 # OS
 .DS_Store
