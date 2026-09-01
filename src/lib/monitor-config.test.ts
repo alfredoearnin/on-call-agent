@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  appliedInSnapshotHistory,
   diffMonitorConfig,
   hasNoDatadogConfig,
   hashMonitorConfig,
@@ -171,6 +172,62 @@ describe("recommendationExplainsEdit", () => {
         },
       ),
       true,
+    );
+  });
+});
+
+describe("appliedInSnapshotHistory", () => {
+  const patch = {
+    target: "message",
+    prod: {
+      find: "@webhook-incidentio-high",
+      replace: "@webhook-incidentio-low",
+    },
+  };
+
+  it("detects the recommended handle appearing where it was absent", () => {
+    assert.equal(
+      appliedInSnapshotHistory(patch, [
+        { message: "{{#is_alert}}@webhook-incidentio-high{{/is_alert}}" },
+        {
+          message:
+            "{{#is_alert}}@webhook-incidentio-high{{/is_alert}}\n{{#is_warning}}@webhook-incidentio-low{{/is_warning}}",
+        },
+      ]),
+      true,
+    );
+  });
+
+  it("ignores a handle that boilerplate merely names in prose", () => {
+    // The non-prod branch documents the low handle without routing to it, so
+    // it is present from the first config we ever read — no transition.
+    const boilerplate = {
+      message:
+        "{{#is_match \"env.name\" \"prod\"}}@webhook-incidentio-high{{/is_match}}\n" +
+        "{{^is_match \"env.name\" \"prod\"}}Put the channel here, this could be " +
+        "@slack-<channel> or '@webhook-incidentio-low'.{{/is_match}}",
+    };
+    assert.equal(appliedInSnapshotHistory(patch, [boilerplate, boilerplate]), false);
+  });
+
+  it("does not manufacture a transition out of config-less snapshots", () => {
+    assert.equal(
+      appliedInSnapshotHistory(patch, [
+        { message: null },
+        { message: null },
+        { message: "{{#is_warning}}@webhook-incidentio-low{{/is_warning}}" },
+      ]),
+      false,
+    );
+  });
+
+  it("returns false without a patch or a replace target", () => {
+    assert.equal(appliedInSnapshotHistory(null, []), false);
+    assert.equal(
+      appliedInSnapshotHistory({ target: "message" }, [
+        { message: "@webhook-incidentio-low" },
+      ]),
+      false,
     );
   });
 });

@@ -148,12 +148,53 @@ export function recommendationExplainsEdit(
   if (!patch) return false;
   const branch = patch.prod ?? patch.dev;
   if (!branch?.replace) return false;
-  const field =
-    patch.target === "query"
-      ? after.query
-      : patch.target === "priority"
-        ? after.priority
-        : after.message;
+  const field = patchTargetField(patch, after);
   if (!field) return false;
   return field.includes(branch.replace);
+}
+
+/** The config field a patch rewrites. Most tuning patches rewrite `message`. */
+export function patchTargetField(
+  patch: PatchLike,
+  fields: MonitorConfigFields,
+): string | null | undefined {
+  return patch.target === "query"
+    ? fields.query
+    : patch.target === "priority"
+      ? fields.priority
+      : fields.message;
+}
+
+/**
+ * True when `snapshots` — in chronological order — show the recommended string
+ * appearing where it was previously absent.
+ *
+ * Presence in the current config is not evidence on its own. Monitor
+ * boilerplate routinely names a handle in prose ("...this could be
+ * @slack-<channel> or '@webhook-incidentio-low'"), so a plain substring test
+ * reads an untouched monitor as applied and buries a real routing gap. Only a
+ * transition can come from an actual edit.
+ *
+ * Snapshots missing the targeted field are skipped rather than treated as
+ * absence: those are syncs that could not read Datadog.
+ */
+export function appliedInSnapshotHistory(
+  patch: PatchLike | null,
+  snapshots: MonitorConfigFields[],
+): boolean {
+  if (!patch) return false;
+  const branch = patch.prod ?? patch.dev;
+  if (!branch?.replace) return false;
+
+  let sawWithout = false;
+  for (const snapshot of snapshots) {
+    const field = patchTargetField(patch, snapshot);
+    if (!field) continue;
+    if (field.includes(branch.replace)) {
+      if (sawWithout) return true;
+    } else {
+      sawWithout = true;
+    }
+  }
+  return false;
 }
