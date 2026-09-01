@@ -71,7 +71,7 @@ echo "==> On-call Ops Dashboard — start (mode: $MODE)"
 # when something it owns is actually missing.
 if [ ! -d node_modules ] || [ ! -f "$ENV_FILE" ] || [ ! -f "$ROOT/.env" ]; then
   echo "==> Running install.sh (missing dependencies or env files)..."
-  bash scripts/install.sh
+  SETUP_ORCHESTRATED=1 bash scripts/install.sh
 else
   echo "==> Dependencies and env files present"
 fi

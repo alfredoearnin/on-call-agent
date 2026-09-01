@@ -43,6 +43,13 @@ else
   echo "==> .env already exists — left untouched"
 fi
 
+# start.sh performs these steps itself, so printing them there would tell a
+# fresh-clone user to run three commands that are already running.
+if [ -n "${SETUP_ORCHESTRATED:-}" ]; then
+  echo "==> Install complete."
+  exit 0
+fi
+
 echo ""
 echo "==> Install complete. Next steps:"
 echo "    1) (optional) edit .env.local to add Datadog / incident.io / Jira keys"
