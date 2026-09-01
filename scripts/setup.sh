@@ -1,21 +1,13 @@
 #!/usr/bin/env bash
 # -----------------------------------------------------------------------------
-# start.sh — one command from a fresh clone to a running dashboard.
+# setup.sh — one command from a fresh clone to a running dashboard.
 #
-# Orchestrates the existing scripts rather than duplicating them: install.sh
-# owns dependencies and env files, init.sh owns seeding and the first sync.
-# What this adds is the missing middle — collecting credentials interactively —
-# and launching the server.
+# Owns the whole first-run path: Node check, dependencies, env files,
+# credentials, database schema, and launching the server. Idempotent, so it is
+# also the right thing to re-run after a schema change or to add a credential.
 #
-# Usage:
-#   bash scripts/start.sh              # configure, then dev server (default)
-#   bash scripts/start.sh --prod       # configure, then build + production
-#   bash scripts/start.sh --no-prompt  # never ask (CI); use whatever is set
-#   bash scripts/start.sh --sync       # also reseed + run an ingest
-#   bash scripts/start.sh --no-server  # configure only, do not launch
-#
-# Idempotent. Never overwrites a credential that is already set, and never
-# echoes one to the terminal.
+# Configuring is always optional: skip every prompt and the dashboard runs on
+# bundled sample data with no credentials at all.
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
@@ -26,6 +18,7 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 ENV_FILE="$ROOT/.env.local"
 ENV_TMP="$ENV_FILE.tmp"
+PRISMA_CLIENT="$ROOT/node_modules/.prisma/client"
 
 cleanup() { rm -f "$ENV_TMP"; }
 
@@ -37,10 +30,28 @@ trap cleanup EXIT
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
 
+usage() {
+  cat <<'EOF'
+setup.sh — from a fresh clone to a running dashboard.
+
+  bash scripts/setup.sh              configure, then dev server (default)
+  bash scripts/setup.sh --prod       configure, then build + production
+  bash scripts/setup.sh --no-prompt  never ask (CI); use whatever is set
+  bash scripts/setup.sh --sync       also reseed and run an ingest
+  bash scripts/setup.sh --no-server  configure only, do not launch
+  bash scripts/setup.sh --check      verify prerequisites only, then exit
+
+Configuring is optional. Skip every prompt and the dashboard runs on bundled
+sample data. Credentials already set are never overwritten, never echoed, and
+never passed as command arguments.
+EOF
+}
+
 MODE="dev"
 PROMPT=1
 FORCE_SYNC=0
 RUN_SERVER=1
+CHECK_ONLY=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -49,10 +60,8 @@ while [ $# -gt 0 ]; do
     --no-prompt|--yes|-y) PROMPT=0 ;;
     --sync) FORCE_SYNC=1 ;;
     --no-server) RUN_SERVER=0 ;;
-    -h|--help)
-      sed -n '3,18p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0
-      ;;
+    --check) CHECK_ONLY=1 ;;
+    -h|--help) usage; exit 0 ;;
     *)
       echo "ERROR: unknown option '$1'. Try --help." >&2
       exit 1
@@ -61,19 +70,70 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+# --- Prerequisite check ------------------------------------------------------
+# Runs before every `npm run dev` via the predev hook, so it stays to plain file
+# checks: no subprocesses, no output when everything is in place. Deliberately
+# does NOT check credentials — the dashboard is meant to run without them.
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  # Disarm the traps: this path owns no temp file, and $ENV_TMP is a fixed name
+  # shared with a possibly-running setup. Exiting with cleanup armed would delete
+  # that file mid-write, and set_env's loop would recreate it and rename a
+  # truncated .env.local over the real one. This path runs on every `npm run dev`.
+  trap - EXIT INT TERM
+
+  missing=""
+  [ -d "$ROOT/node_modules" ] || missing="$missing\n  - dependencies (node_modules)"
+  [ -d "$PRISMA_CLIENT" ] || missing="$missing\n  - generated Prisma client"
+  [ -f "$ROOT/.env" ] || missing="$missing\n  - .env (holds DATABASE_URL for the Prisma CLI)"
+  [ -f "$ENV_FILE" ] || missing="$missing\n  - .env.local"
+  if [ -n "$missing" ]; then
+    echo "" >&2
+    echo "This clone is not set up yet. Missing:" >&2
+    printf '%b\n' "$missing" >&2
+    echo "" >&2
+    echo "Run:  npm run setup      (installs, configures, and starts)" >&2
+    echo "      npm run setup -- --no-server   to set up without launching" >&2
+    echo "" >&2
+    exit 1
+  fi
+  exit 0
+fi
+
 # A non-interactive shell (CI, piped input) must never block on a prompt.
 if [ ! -t 0 ]; then PROMPT=0; fi
 
-echo "==> On-call Ops Dashboard — start (mode: $MODE)"
+echo "==> On-call Ops Dashboard — setup (mode: $MODE)"
 
-# --- Dependencies and env files ----------------------------------------------
-# install.sh is idempotent, but it also runs `npm install`, so only reach for it
-# when something it owns is actually missing.
-if [ ! -d node_modules ] || [ ! -f "$ENV_FILE" ] || [ ! -f "$ROOT/.env" ]; then
-  echo "==> Running install.sh (missing dependencies or env files)..."
-  SETUP_ORCHESTRATED=1 bash scripts/install.sh
+# --- Node ---------------------------------------------------------------------
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node is not installed. Install Node.js 20+ and retry." >&2
+  exit 1
+fi
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  echo "ERROR: Node 20+ required (found $(node --version))." >&2
+  exit 1
+fi
+echo "==> Node $(node --version) OK"
+
+# --- Dependencies -------------------------------------------------------------
+if [ ! -d node_modules ]; then
+  echo "==> Installing npm dependencies..."
+  npm install
 else
-  echo "==> Dependencies and env files present"
+  echo "==> Dependencies present"
+fi
+
+# --- Env files ----------------------------------------------------------------
+# Two files by necessity: the app reads .env.local, but the Prisma CLI reads
+# .env, so DATABASE_URL has to live there. Neither is ever overwritten.
+if [ ! -f "$ENV_FILE" ]; then
+  cp "$ROOT/.env.example" "$ENV_FILE"
+  echo "==> Created .env.local from .env.example"
+fi
+if [ ! -f "$ROOT/.env" ]; then
+  echo 'DATABASE_URL="file:./oncall.db"' >"$ROOT/.env"
+  echo "==> Created .env with DATABASE_URL"
 fi
 
 if ! chmod 600 "$ENV_FILE"; then
@@ -286,25 +346,37 @@ else
 fi
 
 # --- Database ----------------------------------------------------------------
-# The SQLite memory DB is committed, so a clone already has data. Generate the
-# client and apply migrations every time (cheap, and required after a schema
-# change); only seed and sync when asked or when the DB is genuinely absent.
+# The SQLite memory DB is committed, so a clone already arrives with data. The
+# client and migrations are cheap and required after a schema change, so they
+# run every time; seeding and the first sync only when the DB is genuinely
+# absent or --sync asks for it.
 echo ""
-if [ ! -f "$ROOT/prisma/oncall.db" ] || [ "$FORCE_SYNC" -eq 1 ]; then
-  echo "==> Running init.sh (seed + first sync)..."
-  bash scripts/init.sh
+# --no-install so a partial node_modules fails loudly instead of having npx
+# silently fetch an unpinned prisma from the registry.
+echo "==> Generating Prisma client..."
+npm exec --no-install -- prisma generate
+
+echo "==> Applying database schema..."
+# deploy applies committed migrations; if none exist yet, fall back to db push.
+if [ -d prisma/migrations ] && [ -n "$(ls -A prisma/migrations 2>/dev/null || true)" ]; then
+  npm exec --no-install -- prisma migrate deploy
 else
-  echo "==> Generating Prisma client..."
-  npx prisma generate
-  echo "==> Applying migrations..."
-  npx prisma migrate deploy
+  npm exec --no-install -- prisma db push
+fi
+
+if [ ! -f "$ROOT/prisma/oncall.db" ] || [ "$FORCE_SYNC" -eq 1 ]; then
+  echo "==> Seeding defaults + sample data (idempotent)..."
+  npm run seed
+  echo "==> Running an initial sync (respects DEMO_MODE)..."
+  npm run ingest || echo "    WARN: initial ingest failed (check API keys, or leave DEMO_MODE=true)."
+else
   echo "    Database ready. Use --sync to reseed and pull fresh data."
 fi
 
 # --- Server ------------------------------------------------------------------
 if [ "$RUN_SERVER" -eq 0 ]; then
   echo ""
-  echo "==> Configuration complete (--no-server). Start it with: npm run dev"
+  echo "==> Setup complete (--no-server). Start it with: npm run dev"
   exit 0
 fi
 

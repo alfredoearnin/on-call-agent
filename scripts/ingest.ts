@@ -1,5 +1,5 @@
 /**
- * CLI: run one sync now. Used by `npm run ingest`, OS cron/launchd, and init.sh.
+ * CLI: run one sync now. Used by `npm run ingest`, OS cron/launchd, and setup.sh.
  */
 import "@/lib/load-env";
 import { runSync } from "@/lib/ingest/run";
