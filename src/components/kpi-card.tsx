@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -16,13 +17,15 @@ export function KpiCard({
   value,
   sub,
   tone = "default",
+  href,
 }: {
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   tone?: Tone;
+  href?: string;
 }) {
-  return (
+  const inner = (
     <Card className="p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
@@ -32,5 +35,11 @@ export function KpiCard({
       </div>
       {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
     </Card>
+  );
+  if (!href) return inner;
+  return (
+    <Link href={href} className="block transition-opacity hover:opacity-90">
+      {inner}
+    </Link>
   );
 }

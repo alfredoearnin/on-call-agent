@@ -252,3 +252,11 @@ export const CoverageRole = {
   NextSecondary: "nextSecondary",
 } as const;
 export type CoverageRole = (typeof CoverageRole)[keyof typeof CoverageRole];
+
+/** How a monitor config edit entered the dashboard. */
+export const MonitorEditSource = {
+  DatadogDetected: "datadog_detected",
+  DashboardApply: "dashboard_apply",
+} as const;
+export type MonitorEditSource =
+  (typeof MonitorEditSource)[keyof typeof MonitorEditSource];

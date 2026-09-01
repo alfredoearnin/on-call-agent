@@ -129,6 +129,35 @@ export class DatadogClient {
       { method: "PUT", headers: writeHeaders(this.cfg), body: patch },
     );
   }
+
+  /**
+   * Best-effort Audit Trail: who last modified each monitor in a window.
+   * 401/403 means the app key lacks audit_logs_read — callers degrade.
+   */
+  async searchMonitorAuditActors(
+    from: Date,
+    to: Date,
+  ): Promise<Map<string, MonitorAuditActor>> {
+    const res = await httpRequest<{ data?: unknown[] }>(
+      `${this.cfg.datadog.apiBase}/api/v2/audit/events`,
+      {
+        headers: readHeaders(this.cfg),
+        query: {
+          "filter[from]": from.toISOString(),
+          "filter[to]": to.toISOString(),
+          "filter[query]": "@asset.type:monitor @action:modified",
+          "page[limit]": 1000,
+        },
+      },
+    );
+    return parseMonitorAuditActors(res.data ?? []);
+  }
+}
+
+/** Display name of a Datadog user who modified a monitor — never email. */
+export interface MonitorAuditActor {
+  name: string;
+  at: Date;
 }
 
 /**
@@ -142,4 +171,75 @@ export class DatadogClient {
  */
 function monitorPath(id: number | string): string {
   return encodeURIComponent(String(id));
+}
+
+function asRecord(v: unknown): Record<string, unknown> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  return v as Record<string, unknown>;
+}
+
+function walkMonitorIds(v: unknown, into: Set<string>, parentType?: string): void {
+  const rec = asRecord(v);
+  if (!rec) {
+    if (Array.isArray(v)) {
+      for (const item of v) walkMonitorIds(item, into, parentType);
+    }
+    return;
+  }
+  const type = typeof rec.type === "string" ? rec.type : parentType;
+  if (type === "monitor" && rec.id != null && rec.id !== "") {
+    into.add(String(rec.id));
+  }
+  for (const val of Object.values(rec)) {
+    if (val && typeof val === "object") walkMonitorIds(val, into, type);
+  }
+}
+
+/**
+ * Display name only. Datadog's `usr.handle` is the user's email address and
+ * `usr.uuid` is a stable personal identifier, so neither is an acceptable
+ * fallback for a label that lands in the committed database — the UI already
+ * reads a missing actor as "Unknown".
+ */
+function actorNameFrom(usr: Record<string, unknown> | undefined): string | undefined {
+  if (!usr) return undefined;
+  const name = typeof usr.name === "string" ? usr.name.trim() : "";
+  return name || undefined;
+}
+
+/**
+ * Newest modifier per monitor id. Emails are ignored — redact.ts would strip
+ * them, and they must never land in the committed database.
+ */
+export function parseMonitorAuditActors(events: unknown[]): Map<string, MonitorAuditActor> {
+  const byMonitor = new Map<string, MonitorAuditActor>();
+
+  for (const raw of events) {
+    const event = asRecord(raw);
+    const attrs = asRecord(event?.attributes) ?? event;
+    if (!attrs) continue;
+
+    const inner = asRecord(attrs.attributes) ?? attrs;
+    const timestampRaw =
+      (typeof attrs.timestamp === "string" && attrs.timestamp) ||
+      (typeof inner.timestamp === "string" && inner.timestamp) ||
+      "";
+    const at = timestampRaw ? new Date(timestampRaw) : undefined;
+    if (!at || Number.isNaN(at.getTime())) continue;
+
+    const usr = asRecord(inner.usr) ?? asRecord(attrs.usr);
+    const name = actorNameFrom(usr);
+    if (!name) continue;
+
+    const ids = new Set<string>();
+    walkMonitorIds(inner, ids);
+    walkMonitorIds(attrs, ids);
+
+    for (const id of ids) {
+      const prev = byMonitor.get(id);
+      if (!prev || prev.at < at) byMonitor.set(id, { name, at });
+    }
+  }
+
+  return byMonitor;
 }

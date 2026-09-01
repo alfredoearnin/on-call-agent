@@ -7,6 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { AlertCard } from "@/components/alert-card";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { RevertButton } from "@/components/revert-button";
+import { getMonitorEdits } from "@/lib/monitor-edits";
+import { MonitorEditCard } from "@/components/monitor-edit-card";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 import { AppliedChangeStatus } from "@/lib/constants";
 
@@ -19,9 +21,10 @@ export default async function MonitorPage({
 }) {
   const { id } = await params;
   const cfg = getConfig();
-  const [monitor, settings] = await Promise.all([
+  const [monitor, settings, edits] = await Promise.all([
     getMonitorDetail(id),
     getSyncSettings(),
+    getMonitorEdits({ monitorId: id }),
   ]);
   if (!monitor) notFound();
   const tz = settings?.timezone ?? cfg.team.timezone;
@@ -161,35 +164,24 @@ export default async function MonitorPage({
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Config snapshots</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-1 text-xs">
-            {monitor.snapshots.map((s, i) => {
-              const prev = monitor.snapshots[i + 1];
-              const changed = prev && prev.hash !== s.hash;
-              return (
-                <div
-                  key={s.id}
-                  className="flex items-center justify-between border-b border-border/40 py-1"
-                >
-                  <span className="text-muted-foreground">
-                    {fmtDateTime(s.capturedAt, tz)}
-                  </span>
-                  <span className="font-mono text-[11px]">{s.hash}</span>
-                  {changed ? (
-                    <Badge tone="warn">changed</Badge>
-                  ) : (
-                    <Badge tone="neutral">stable</Badge>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">Config edits</h2>
+        {edits.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No config edits recorded yet. They appear on the next sync after a
+            Datadog Save, or when a recommendation is applied here.
+          </p>
+        ) : (
+          edits.map((edit) => (
+            <MonitorEditCard
+              key={edit.id}
+              edit={edit}
+              tz={tz}
+              showMonitorLink={false}
+            />
+          ))
+        )}
+      </section>
     </div>
   );
 }

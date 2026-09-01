@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { AppliedChangeStatus, RecommendationStatus } from "@/lib/constants";
 import type { ProposedPatch } from "@/lib/ingest/types";
+import { appliedInSnapshotHistory } from "@/lib/monitor-config";
 
 export interface FeedbackResult {
   applied: number;
@@ -12,7 +13,7 @@ export interface FeedbackResult {
  * Feedback loop (the agent prompt, Step 0.5). After monitors + recommendations are
  * persisted, detect whether a recommended change was applied — either via a
  * recorded AppliedChange (this dashboard's apply feature) or by observing the
- * recommended transform already present in the monitor's live config (someone
+ * recommended transform appear in the monitor's snapshot history (someone
  * applied it out-of-band). Then measure the outcome:
  *   - applied + no fires this week  -> validated
  *   - applied + fires returned      -> regressed
@@ -20,7 +21,17 @@ export interface FeedbackResult {
  */
 export async function reconcileFeedback(): Promise<FeedbackResult> {
   const recs = await prisma.tuningRecommendation.findMany({
-    include: { monitor: true, appliedChanges: true },
+    include: {
+      appliedChanges: true,
+      monitor: {
+        include: {
+          snapshots: {
+            orderBy: { capturedAt: "asc" },
+            select: { query: true, message: true, priority: true },
+          },
+        },
+      },
+    },
   });
 
   const result: FeedbackResult = { applied: 0, validated: 0, regressed: 0 };
@@ -34,23 +45,11 @@ export async function reconcileFeedback(): Promise<FeedbackResult> {
       (c) => c.status === AppliedChangeStatus.Applied,
     );
 
-    // Out-of-band detection: the recommended transform is already present.
+    // Out-of-band detection, judged from the snapshot history rather than the
+    // current config: a handle named in the monitor's boilerplate prose would
+    // otherwise read as applied. See appliedInSnapshotHistory.
     if (!detectedApplied && patch && rec.monitor) {
-      const field =
-        patch.target === "query"
-          ? rec.monitor.query
-          : patch.target === "message"
-            ? rec.monitor.message
-            : null;
-      const branch = patch.prod ?? patch.dev;
-      if (
-        field &&
-        branch &&
-        field.includes(branch.replace) &&
-        !field.includes(branch.find)
-      ) {
-        detectedApplied = true;
-      }
+      detectedApplied = appliedInSnapshotHistory(patch, rec.monitor.snapshots);
     }
 
     if (!detectedApplied) continue;

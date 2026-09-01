@@ -75,7 +75,7 @@ function deriveService(m: DatadogMonitor): string | undefined {
   return job?.[1];
 }
 
-function mapMonitors(raw: DatadogMonitor[], dd: DatadogClient): NormalizedMonitor[] {
+export function mapMonitors(raw: DatadogMonitor[], dd: DatadogClient): NormalizedMonitor[] {
   return raw.map((m) => ({
     id: String(m.id),
     name: m.name,
@@ -90,6 +90,7 @@ function mapMonitors(raw: DatadogMonitor[], dd: DatadogClient): NormalizedMonito
     cluster: deriveCluster(m.query),
     modifiedAt: m.modified ? new Date(m.modified) : undefined,
     options: m.options,
+    thresholds: m.options?.thresholds,
   }));
 }
 
