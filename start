@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# -----------------------------------------------------------------------------
+# start — launch the dashboard.
+#
+# Deliberately does no setup: it checks that the clone is ready and tells you to
+# run `npm run setup` if it is not. Configuring credentials is optional and is
+# setup.sh's job; this is the everyday command.
+#
+#   ./start           dev server (default)
+#   ./start --prod    production build, then serve
+# -----------------------------------------------------------------------------
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+MODE="dev"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prod|--production) MODE="prod" ;;
+    --dev) MODE="dev" ;;
+    -h|--help)
+      sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "ERROR: unknown option '$1'. Try --help." >&2
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+# Prints what is missing and how to fix it, then exits non-zero, which set -e
+# turns into our exit too.
+bash scripts/setup.sh --check
+
+if [ "$MODE" = "prod" ]; then
+  npm run build
+  exec npm run start
+fi
+
+exec npm run dev

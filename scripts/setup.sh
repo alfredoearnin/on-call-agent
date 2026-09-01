@@ -376,7 +376,7 @@ fi
 # --- Server ------------------------------------------------------------------
 if [ "$RUN_SERVER" -eq 0 ]; then
   echo ""
-  echo "==> Setup complete (--no-server). Start it with: npm run dev"
+  echo "==> Setup complete (--no-server). Start it with: ./start   (or npm run dev)"
   exit 0
 fi
 
