@@ -379,6 +379,38 @@ checkout that leaves the data unchanged stays quiet.
 ## Quick start
 
 ```bash
+npm run setup              # deps, credentials, DB, then http://localhost:3000
+```
+
+`setup` is idempotent and walks you through it: it installs dependencies and env
+files only if they are missing, asks for the credentials that are still empty,
+applies migrations, and starts the dev server. Answer nothing and the dashboard
+runs on bundled sample data — no credentials required.
+
+It asks in tiers. Datadog first, since that is what takes the dashboard off demo
+data, and the key pair is verified against the API before continuing. incident.io
+and Jira are offered next as optional. The Datadog **write** key is last and
+off by default, because enabling it lets the Apply button rewrite live monitor
+routing from the browser.
+
+Secrets are read without echoing, never passed as command arguments, never
+written to disk outside `.env.local` (which is chmod 600), and a credential that
+is already set is never overwritten. A value containing `$` or `'` is refused
+rather than stored, because `@next/env` expands `$VAR` while the CLI scripts do
+not — set those two by hand.
+
+```bash
+npm run setup:prod                  # build + production server instead of dev
+bash scripts/start.sh --sync        # also reseed and pull fresh data
+bash scripts/start.sh --no-prompt   # never ask (CI); use whatever is configured
+bash scripts/start.sh --no-server   # configure only, do not launch
+bash scripts/start.sh --help
+```
+
+The two underlying scripts remain usable on their own — `scripts/install.sh` owns
+dependencies and env files, `scripts/init.sh` owns seeding and the first sync:
+
+```bash
 bash scripts/install.sh    # deps + local env files
 # (optional) edit .env.local to add API keys; Confluence/demo need none
 bash scripts/init.sh       # create + seed the SQLite memory DB, run a first sync
@@ -542,6 +574,8 @@ person — so the audit trail records *that* a change happened, not who made it.
 | `npm run scheduler` | Start the automatic local sync worker. |
 | `npm run seed` | Seed defaults + sample memory (idempotent). |
 | `npm run prisma:migrate` | Create/apply a schema migration (dev). |
+| `npm run setup` | Clone to running dashboard: deps, credentials, DB, dev server. |
+| `npm run setup:prod` | Same, but build + serve production. |
 | `bash scripts/install.sh` | One-time setup. |
 | `bash scripts/init.sh` | Initialize DB + first sync. |
 
