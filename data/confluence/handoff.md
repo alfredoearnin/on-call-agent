@@ -1,10 +1,10 @@
-🔄 **Live page** — refreshed daily during the on-call week (2026-09-08 → 2026-09-15). Last refreshed **2026-09-11 10:03 AM PT (America/Los_Angeles)** (\~3 days / 72 h into the week). This page freezes at the Tuesday handoff (2026-09-15 11:00 America/Mexico_City); a new page opens for the next week.
+🔄 **Live page** — refreshed daily during the on-call week (2026-09-08 → 2026-09-15). Last refreshed **2026-09-12 10:01 AM PT (America/Los_Angeles)** (\~4 days / 96 h into the week). This page freezes at the Tuesday handoff (2026-09-15 11:00 America/Mexico_City); a new page opens for the next week.
 
 🔴 **Carry-in from the week just closed — watch these.** (1) **First-cashout volume drop** [17131362](https://app.datadoghq.com/monitors/17131362) — the Aug 7 \~15:00 UTC cliff persists (\~35 days); reads OK only because the anomaly model adapted (quiet ≠ recovered). Real signal — do NOT tune → Activation runbook `kem-tug-987` + Jira. (2) **Funnel-cashout expirations low** [143509449](https://app.datadoghq.com/monitors/143509449) — fired 2× this week (High, acked) at the tightened `< 2` threshold; the Sep 10 fire is still open as a stale incident.io alert (Datadog No Data). The real drop persists → Jira / throughput fix, do NOT tune further. Prior week (Sep 1 → Sep 8) closed at **34 records** (14 High / 20 Low), all resolved, 0 incidents.
 
 # Growth Team Ops Review — Weekly Handoff
 
-**09/11/2026 Growth Team Ops Review** · On-call week **2026-09-08 11:00 → 2026-09-15 11:00** (America/Mexico_City) · Sources: incident.io + Datadog (read-only) + Jira (vulnerabilities) · Last refreshed: **2026-09-11 10:03 AM PT** (week-to-date, \~3 days in; live, refreshed daily).
+**09/12/2026 Growth Team Ops Review** · On-call week **2026-09-08 11:00 → 2026-09-15 11:00** (America/Mexico_City) · Sources: incident.io + Datadog (read-only) + Jira (vulnerabilities) · Last refreshed: **2026-09-12 10:01 AM PT** (week-to-date, \~4 days in; live, refreshed daily).
 
 _This on-call week — primary: **Edder Núñez**; secondary: **shashank** (shift Tue Sep 8 → Tue Sep 15; verified live via_ `schedule_show`_). Next handoff Sep 15: primary **Nabi**, secondary **Ankur Shivani**._
 
@@ -16,7 +16,7 @@ _Coverage check: could not be completed (no Slack profile-read tool available un
 * [PENG Bugs OOSLA (Jira)](https://earnin.atlassian.net/jira/dashboards/10779)
 * [Vulnerabilities (Jira)](https://earnin.atlassian.net/issues/?filter=15295)
 
-**Alert volume — week-to-date (\~3 days in):** **17 records** (8 High, 9 Low) — 16 resolved, 1 still firing (a stale funnel-cashout alert, Datadog No Data). | **Prior full week (Sep 1 → Sep 8):** 34 records (14 High, 20 Low), all resolved, 0 incidents. | **Trend: ↓ (lighter)** — 17 records in the first \~3 days vs **25** in the prior week's same 3-day slice; run-rate \~40/wk (the prior full week's 34 was front-loaded — 25 of its 34 landed in the first 3 days — so the same-slice comparison is the fair read). **Human-attention: 11 | Auto-resolved: 6.** **Escalation rate (alerts → incidents): 0/17 (0%).** **Still firing: 0 active / 5 stale** (incident.io) — no Growth monitor reads Alert/Warn now; the 5 stale are 4 old orphans plus the Sep 10 lingering funnel-cashout alert (below).
+**Alert volume — week-to-date (\~4 days in):** **17 records** (8 High, 9 Low) — 16 resolved, 1 still firing (a stale funnel-cashout alert, Datadog No Data); no new alerts since Sep 11 \~9:25 AM PT (a quiet day 4). | **Prior full week (Sep 1 → Sep 8):** 34 records (14 High, 20 Low), all resolved, 0 incidents. | **Trend: ↓ (lighter)** — 17 records in the first \~4 days vs **25** in the prior week's same 4-day slice; run-rate \~30/wk (the prior full week's 34 was front-loaded — all 25 of the same-slice landed by day 3 — so the same-slice comparison is the fair read). **Human-attention: 11 | Auto-resolved: 6.** **Escalation rate (alerts → incidents): 0/17 (0%).** **Still firing: 0 active / 5 stale** (incident.io) — no Growth monitor reads Alert/Warn now; the 5 stale are 4 old orphans plus the Sep 10 lingering funnel-cashout alert (below).
 
 _Priority = monitor severity/routing (High/Low); Warn/Alert = the level a fire actually crossed — the two are independent. A High-priority monitor can fire only at Warn._
 
@@ -99,7 +99,7 @@ _Top 5 by expected impact; **full history (25 rows) →**_ [_Monitor Tuning Ledg
 
 ## Vulnerabilities, Velocity and Operational Costs (15 minutes)
 
-**Vulnerabilities:** 13 open (<custom data-type="status" data-id="id-9">6 Critical</custom> / <custom data-type="status" data-id="id-10">7 High</custom>) via [filter 15295 / OOSLA](https://earnin.atlassian.net/issues/?filter=15295) (org-wide, as of this refresh; down from 15 at the Sep 10 refresh). 6 Critical: 5 `tomcat-embed-core` SCA bumps (`KMONO-60`, `KMONO-61`, `EBBUD-3777`, `EBBUD-3778`, `EBBUD-3779`) and a `io.netty:netty-handler` SCA (`KMONO-63`). 7 High: SAST anti-forgery-token (PayRouter `QAMRE-1920`, EarninCard `QAMRE-1919`, Bank `QAMRE-1970`, Offers `QAMRE-1969`) + SAST log-leakage (`MOBPLAT-4684`) + SCA bumps (`tar` `MOBPLAT-4682`, `netty-codec-http` `KMONO-59`). The two `SSH.NET` Highs open at the Sep 10 refresh are no longer open. Severity from the ticket summary prefix (Jira priority field uniformly "Low"). **org-wide** scope (no Growth-owned ticket). _Count is volatile intraday._
+**Vulnerabilities:** 13 open (<custom data-type="status" data-id="id-9">6 Critical</custom> / <custom data-type="status" data-id="id-10">7 High</custom>) via [filter 15295 / OOSLA](https://earnin.atlassian.net/issues/?filter=15295) (org-wide, as of this refresh; unchanged from the Sep 11 refresh at 13). 6 Critical: 5 `tomcat-embed-core` SCA bumps (`KMONO-60`, `KMONO-61`, `EBBUD-3777`, `EBBUD-3778`, `EBBUD-3779`) and a `io.netty:netty-handler` SCA (`KMONO-63`). 7 High: SAST anti-forgery-token (PayRouter `QAMRE-1920`, EarninCard `QAMRE-1919`, Bank `QAMRE-1970`, Offers `QAMRE-1969`) + SAST log-leakage (`MOBPLAT-4684`) + SCA bumps (`tar` `MOBPLAT-4682`, `netty-codec-http` `KMONO-59`). Severity from the ticket summary prefix (Jira priority field uniformly "Low"). **org-wide** scope (no Growth-owned ticket). _Count is volatile intraday._
 
 **Velocity:** TBD. **Operational Costs:** TBD.
 
@@ -127,4 +127,4 @@ _Add notes here; they survive daily refreshes._
 
 ---
 
-_Generated by the Growth Team Ops Review agent. Window: 2026-09-08 11:00 → 2026-09-15 11:00 America/Mexico_City (week-to-date, \~3 days in; live, refreshed daily until it freezes at the Sep 15 handoff). Last refreshed: 2026-09-11 10:03 AM PT. Sources: incident.io (read-only) + Datadog (read-only) + Jira (vulnerabilities) — all connectors healthy. Customer identifiers redacted where present (none required this run). You can read #growth-engineering-alerts for more information. No monitoring configuration was changed by this agent._
+_Generated by the Growth Team Ops Review agent. Window: 2026-09-08 11:00 → 2026-09-15 11:00 America/Mexico_City (week-to-date, \~4 days in; live, refreshed daily until it freezes at the Sep 15 handoff). Last refreshed: 2026-09-12 10:01 AM PT. Sources: incident.io (read-only) + Datadog (read-only) + Jira (vulnerabilities) — all connectors healthy. Customer identifiers redacted where present (none required this run). You can read #growth-engineering-alerts for more information. No monitoring configuration was changed by this agent._
