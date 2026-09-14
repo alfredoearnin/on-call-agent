@@ -1,7 +1,12 @@
 import "server-only";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
-import { getConfig, hasCloudAutomations } from "@/lib/config";
+import { getConfig, hasCloudAutomations, hasConfluence } from "@/lib/config";
+import { ConfluenceClient } from "@/lib/clients/confluence";
+import {
+  parseCausePage,
+  type CauseReport,
+} from "@/lib/analysis/cause-report";
 import { dayKey } from "@/lib/format";
 import { AUTOMATIONS } from "@/lib/automations/meta";
 import {
@@ -621,4 +626,54 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
         a.recommendationCount - b.recommendationCount ||
         a.name.localeCompare(b.name),
     );
+}
+
+export interface MonitorCauseFindings {
+  /** Absolute URL of the Confluence page, when one was found. */
+  url?: string;
+  title?: string;
+  updatedAtIso?: string;
+  report?: CauseReport;
+  /** Why there is nothing to show. Distinguishes "no page" from "page unreadable". */
+  problem?: string;
+}
+
+/**
+ * The cause-investigation findings for one monitor, read from Confluence.
+ *
+ * Every failure mode returns a `problem` rather than an empty result, because
+ * "the agent has not written anything", "Atlassian is not configured" and "the
+ * page exists but the dashboard could not read it" call for different actions
+ * and must not collapse into a blank panel.
+ */
+export async function getMonitorCauseFindings(
+  monitorId: string,
+): Promise<MonitorCauseFindings> {
+  const cfg = getConfig();
+  if (!hasConfluence(cfg)) {
+    return {
+      problem:
+        "Atlassian credentials are not configured, so findings cannot be read (set JIRA_EMAIL and JIRA_API_TOKEN).",
+    };
+  }
+
+  try {
+    const page = await new ConfluenceClient(cfg).findMonitorCausePage(monitorId);
+    if (!page) {
+      return {
+        problem: "No findings page yet — the agent writes one when it finishes.",
+      };
+    }
+    const parsed = parseCausePage(page.body);
+    return {
+      url: page.url,
+      title: page.title,
+      updatedAtIso: page.updatedAtIso,
+      report: parsed.report,
+      problem: parsed.problem,
+    };
+  } catch {
+    // A Confluence outage must not take the monitor page down with it.
+    return { problem: "Confluence could not be reached." };
+  }
 }

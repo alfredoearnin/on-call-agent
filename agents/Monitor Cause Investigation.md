@@ -165,6 +165,52 @@ tickets.
   bodies or tokens. Refer to a user as "the requesting user". If a trace
   attribute contains a customer identifier, name the attribute, not its value.
 
+### A Confluence page per monitor — how the dashboard reads you
+
+Write your findings to Confluence in the folder
+`https://earnin.atlassian.net/wiki/spaces/~712020cb7ebe6a714e411e98574e2fb19d5faa/folder/5516492805`.
+
+**Title the page `Monitor <id>`**, e.g. `Monitor 243692163`. The id in the
+title is the entire contract between you and the dashboard: it has no way to be
+told a page URL, so it searches the space for a title carrying the monitor id.
+Get the title wrong and your findings are invisible to whoever asked for them.
+One page per monitor — rewrite it on a later investigation rather than creating
+a second.
+
+Write for a person: what fired, what you found, the trace, what to change. Then
+include **exactly one fenced `json` block** with this shape, which is what the
+dashboard actually reads:
+
+```json
+{
+  "monitorId": "243692163",
+  "investigatedAt": "2026-09-14T22:40:00Z",
+  "verdict": "real_defect",
+  "cause": "A retry loop against service-card-processor 404s, with no timeout budget and no propagation of client cancellation.",
+  "evidence": ["trace 6aa1197f", "https://app.datadoghq.com/apm/trace/6aa1197f"],
+  "tickets": ["GROWTH-101", "GROWTH-102"],
+  "receivedMonitorId": true,
+  "limitations": []
+}
+```
+
+Rules for the block, all of which the dashboard enforces:
+
+- `verdict` is exactly one of `noise_only`, `real_defect`, `undetermined`.
+- `cause` is `null` when the verdict is `undetermined`. Do not write a
+  plausible sentence to fill it.
+- `receivedMonitorId` records whether the trigger actually handed you a
+  `monitorId`. The dashboard shows a warning when it is `false`, because a
+  finding about a monitor nobody clicked is a different thing from one about
+  the monitor they did.
+- `limitations` is where a missing MCP server, no repository access or absent
+  trace retention goes. The dashboard shows it. An empty array is a claim that
+  nothing got in your way.
+- Keep the prose outside the block. The block is data; the page is the
+  explanation. The dashboard reads counts and verdicts only from the block,
+  because extracting them from sentences is exactly how the weekly handoff
+  pipeline came to lose twenty of twenty-three firings.
+
 ### A Slack message to `#growth-engineering-alerts`
 
 One message per run, threaded if you post more than a few lines:

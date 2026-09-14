@@ -3,9 +3,11 @@ import { notFound } from "next/navigation";
 import { getConfig, canApply, hasDatadogRead } from "@/lib/config";
 import {
   getLastMonitorAnalysis,
+  getMonitorCauseFindings,
   getMonitorDetail,
   getSyncSettings,
 } from "@/lib/queries";
+import { verdictLabel } from "@/lib/analysis/cause-report";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
 import { AutomationKey } from "@/lib/constants";
@@ -31,11 +33,12 @@ export default async function MonitorPage({
   // A run the platform killed mid-request would otherwise sit in flight
   // forever; this settles it to `expired` before the status line is rendered.
   await reconcileStaleAnalyses();
-  const [monitor, settings, edits, lastAnalysis] = await Promise.all([
+  const [monitor, settings, edits, lastAnalysis, findings] = await Promise.all([
     getMonitorDetail(id),
     getSyncSettings(),
     getMonitorEdits({ monitorId: id }),
     getLastMonitorAnalysis(id),
+    getMonitorCauseFindings(id),
   ]);
   if (!monitor) notFound();
   const tz = settings?.timezone ?? cfg.team.timezone;
@@ -106,29 +109,89 @@ export default async function MonitorPage({
         )}
       </header>
 
-      {lastAnalysis?.investigationRequestedAt && (
+      {(findings.report ||
+        findings.url ||
+        lastAnalysis?.investigationRequestedAt) && (
         <Card>
           <CardHeader>
             <CardTitle>Cause investigation</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-1 text-sm">
-            <p>
-              Requested{" "}
-              {fmtDateTime(lastAnalysis.investigationRequestedAt, tz)} — the
-              agent runs in Cursor, so its findings arrive as Jira tickets
-              labelled{" "}
-              <code className="rounded bg-background px-1 text-xs">
-                monitor-{monitor.id}
-              </code>{" "}
-              and a message in the alerts channel.
-            </p>
-            {/* "Requested" is the whole claim. Cursor exposes no run-status API
-                to the dashboard, so this cannot say whether the run succeeded,
-                found anything, or is still going — the link is how you find
-                out, and pretending otherwise is what the automation health
-                checks already refuse to do. */}
+          <CardContent className="space-y-2 text-sm">
+            {findings.report ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    tone={
+                      findings.report.verdict === "real_defect"
+                        ? "danger"
+                        : findings.report.verdict === "noise_only"
+                          ? "success"
+                          : "neutral"
+                    }
+                  >
+                    {verdictLabel(findings.report.verdict)}
+                  </Badge>
+                  {findings.updatedAtIso && (
+                    <span className="text-xs text-muted-foreground">
+                      {fmtDateTime(findings.updatedAtIso, tz)}
+                    </span>
+                  )}
+                  {/* The prompt must report whether the trigger delivered a
+                      monitor id. Surfaced because it is the difference between
+                      "this is about the monitor you clicked" and "the agent
+                      chose for itself". */}
+                  {findings.report.receivedMonitorId === false && (
+                    <Badge tone="warning">
+                      agent selected this monitor itself
+                    </Badge>
+                  )}
+                </div>
+
+                <p>
+                  {findings.report.cause ??
+                    "Cause not determined from available signals."}
+                </p>
+
+                {findings.report.tickets.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Tickets: {findings.report.tickets.join(", ")}
+                  </p>
+                )}
+                {findings.report.evidence.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Evidence: {findings.report.evidence.join(" · ")}
+                  </p>
+                )}
+                {findings.report.limitations.length > 0 && (
+                  <p className="text-xs text-warning">
+                    The agent could not: {findings.report.limitations.join("; ")}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-muted-foreground">{findings.problem}</p>
+            )}
+
             <p className="text-xs text-muted-foreground">
-              This records that it was asked, not what it found.{" "}
+              {lastAnalysis?.investigationRequestedAt && (
+                <>
+                  Requested{" "}
+                  {fmtDateTime(lastAnalysis.investigationRequestedAt, tz)}.{" "}
+                </>
+              )}
+              {findings.url && (
+                <>
+                  <a
+                    href={findings.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    Read the full page ↗
+                  </a>
+                  {" · "}
+                </>
+              )}
               <a
                 href={`${cfg.automations.consoleUrl[AutomationKey.CauseInvestigation]}/runs`}
                 target="_blank"
