@@ -3,6 +3,7 @@ import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
 import { getConfig, hasCloudAutomations } from "@/lib/config";
 import { dayKey } from "@/lib/format";
+import { AUTOMATIONS } from "@/lib/automations/meta";
 import {
   AlertDisposition,
   AutomationKey,
@@ -497,8 +498,11 @@ export async function getWeekClose(
 export async function getLastAutomationTriggers(): Promise<
   Record<AutomationKey, { id: string; triggeredAt: Date; status: string } | null>
 > {
-  const [healthCheck, dashboardRefresh] = await Promise.all(
-    [AutomationKey.HealthCheck, AutomationKey.DashboardRefresh].map((key) =>
+  // Derived from AUTOMATIONS rather than listed, so adding an automation
+  // cannot leave a key silently missing from this record.
+  const keys = AUTOMATIONS.map((a) => a.key);
+  const rows = await Promise.all(
+    keys.map((key) =>
       prisma.automationTrigger.findFirst({
         where: { automationKey: key, status: TriggerStatus.Triggered },
         orderBy: { triggeredAt: "desc" },
@@ -506,10 +510,10 @@ export async function getLastAutomationTriggers(): Promise<
       }),
     ),
   );
-  return {
-    [AutomationKey.HealthCheck]: healthCheck,
-    [AutomationKey.DashboardRefresh]: dashboardRefresh,
-  };
+  return Object.fromEntries(keys.map((k, i) => [k, rows[i]])) as Record<
+    AutomationKey,
+    { id: string; triggeredAt: Date; status: string } | null
+  >;
 }
 
 /** Recent trigger attempts, for the Settings run log. */

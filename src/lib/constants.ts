@@ -163,6 +163,15 @@ export type AppliedChangeStatus =
 export const AutomationKey = {
   HealthCheck: "health_check",
   DashboardRefresh: "dashboard_refresh",
+  /**
+   * Causal investigation of monitors the rules have already been through.
+   *
+   * Unlike the other two this one is not part of the daily chain: it is fired
+   * on demand, produces Jira tickets and a Slack message rather than a
+   * Confluence page or a commit, and so has nothing in this checkout for the
+   * health check to observe. Its status is "we asked", never "it worked".
+   */
+  CauseInvestigation: "cause_investigation",
 } as const;
 export type AutomationKey = (typeof AutomationKey)[keyof typeof AutomationKey];
 

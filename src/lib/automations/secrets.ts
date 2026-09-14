@@ -32,6 +32,10 @@ const ENV_KEYS: Record<AutomationKey, { url: string; key: string }> = {
     url: "CURSOR_DASHBOARD_REFRESH_WEBHOOK_URL",
     key: "CURSOR_DASHBOARD_REFRESH_API_KEY",
   },
+  [AutomationKey.CauseInvestigation]: {
+    url: "CURSOR_CAUSE_INVESTIGATION_WEBHOOK_URL",
+    key: "CURSOR_CAUSE_INVESTIGATION_API_KEY",
+  },
 };
 
 export function automationSecret(key: AutomationKey): AutomationSecret {
