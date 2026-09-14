@@ -141,9 +141,32 @@ function sanitizeFailure(err: unknown): string {
     if (err.name === "HttpError") {
       return "A source system rejected the request. Check the Datadog and incident.io credentials.";
     }
+    if (isDatabaseMovedError(err)) {
+      return "The database file was replaced while the server was running (a branch switch does this, because prisma/oncall.db is committed). Restart the dev server.";
+    }
     return `Analysis failed (${err.name}).`;
   }
   return "Analysis failed.";
+}
+
+/**
+ * SQLite refusing to write because the file it opened is gone.
+ *
+ * Extended code 1032 is SQLITE_READONLY_DBMOVED: the database was moved or
+ * deleted since the connection opened it. In this repo that is not corruption
+ * and not a permissions problem — `prisma/oncall.db` is committed, so checking
+ * out another branch replaces the file and every long-lived connection is left
+ * holding an unlinked inode. It surfaces as a bare
+ * `PrismaClientUnknownRequestError`, which says nothing at all about restarting
+ * the server, so the mapping is worth the few lines. Matched on text because
+ * Prisma does not expose the extended code as a field.
+ */
+function isDatabaseMovedError(err: Error): boolean {
+  const text = `${err.message}`;
+  return (
+    text.includes("extended_code: 1032") ||
+    text.includes("attempt to write a readonly database")
+  );
 }
 
 /**
