@@ -117,6 +117,45 @@ export class DatadogClient {
   }
 
   /**
+   * Query a metric that groups (`... by {resource_name}`), keeping the series
+   * separate.
+   *
+   * `queryMetric` flattens every series into one array, which is right for a
+   * baseline but destroys the only signal that distinguishes a slow endpoint
+   * from a stalled process: whether the spike is confined to one resource or
+   * hit all of them at once. A health probe that normally answers in 0.5ms and
+   * suddenly takes 111s is not latency — it is the pod not running — and that
+   * is invisible once the series are averaged together.
+   *
+   * Keyed by Datadog's `scope` string (e.g. `resource_name:get_/control/ready`).
+   */
+  async queryMetricGrouped(
+    query: string,
+    fromEpoch: number,
+    toEpoch: number,
+  ): Promise<Map<string, MetricPoint[]>> {
+    const res = await httpRequest<{
+      series?: { scope?: string; pointlist?: [number, number][] }[];
+    }>(`${this.cfg.datadog.apiBase}/api/v1/query`, {
+      headers: readHeaders(this.cfg),
+      query: { from: fromEpoch, to: toEpoch, query },
+    });
+
+    const bySeries = new Map<string, MetricPoint[]>();
+    for (const s of res.series ?? []) {
+      const scope = s.scope ?? "*";
+      const points = bySeries.get(scope) ?? [];
+      for (const [at, v] of s.pointlist ?? []) {
+        if (typeof v === "number" && Number.isFinite(v)) {
+          points.push({ at, value: v });
+        }
+      }
+      bySeries.set(scope, points);
+    }
+    return bySeries;
+  }
+
+  /**
    * WRITE — used ONLY by the guarded apply feature. Uses the separate
    * write-scoped application key (least privilege).
    */
@@ -152,6 +191,17 @@ export class DatadogClient {
     );
     return parseMonitorAuditActors(res.data ?? []);
   }
+}
+
+/**
+ * One metric sample. The timestamp matters for the counterfactual: replaying a
+ * proposed rule over a past incident needs to know when each value landed, not
+ * just the distribution.
+ */
+export interface MetricPoint {
+  /** Epoch milliseconds, as Datadog returns it. */
+  at: number;
+  value: number;
 }
 
 /** Display name of a Datadog user who modified a monitor — never email. */

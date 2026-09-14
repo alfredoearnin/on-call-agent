@@ -29,6 +29,7 @@
     "postcss": "8.5.10"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.125.0",
     "@prisma/client": "6.19.3",
     "clsx": "2.1.1",
     "dotenv": "17.4.2",

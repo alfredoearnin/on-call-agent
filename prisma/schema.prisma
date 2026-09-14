@@ -361,3 +361,49 @@ model MonitorEditNote {
 
   @@index([monitorId, afterHash, createdAt])
 }
+
+/// One on-demand "Analyze this monitor" run: the evidence that was gathered, and
+/// what the interpretation made of it.
+///
+/// Separate from AutomationTrigger, which is fire-and-forget by construction. This
+/// one has states to observe, because the work happens in-process: evidence comes
+/// from the Datadog and incident.io clients, and only the interpretation of that
+/// evidence is delegated.
+///
+/// No FK to Monitor, following AutomationTrigger and MonitorEditNote: Prisma's
+/// SQLite provider rewrites a whole table when its FKs change, and prisma/oncall.db
+/// is committed, so a relation here would turn every migration into a large binary
+/// diff.
+///
+/// `evidenceJson` is kept on the row on purpose. It is what the recommendation was
+/// actually based on, so a reviewer can check the reasoning against the numbers
+/// instead of taking the summary on trust — and a prompt change can be re-run
+/// against the same bundle. It holds metric aggregates, alert metadata, and
+/// responder display names; never request bodies, customer identifiers, or emails.
+model MonitorAnalysis {
+  id        String @id @default(cuid())
+  monitorId String
+  status    String @default("queued") // AnalysisStatus
+  operator  String
+
+  /// Sanitized failure text. Never a URL, key, or response body.
+  error String?
+
+  /// The gathered evidence bundle (JSON), as sent for interpretation.
+  evidenceJson String?
+  /// One-line human summary of the finding, for the status line.
+  resultSummary String?
+  /// The recommendation this produced, when it produced one. Loose id, no FK.
+  recommendationId String?
+
+  /// Input tokens served from cache on the interpretation call. Zero across
+  /// repeated runs means a silent cache invalidator in the system prompt.
+  cacheReadTokens Int?
+
+  requestedAt DateTime  @default(now())
+  /// When a terminal state was actually observed. Null while in flight.
+  observedAt  DateTime?
+
+  @@index([monitorId, requestedAt])
+  @@index([status])
+}

@@ -79,6 +79,20 @@ export const IssueType = {
   RecurringRealFailure: "recurring_real_failure",
   StaleNonResolving: "stale_non_resolving",
   OwnershipReview: "ownership_review",
+  /**
+   * The threshold is defensible but the aggregation reaches it on a single
+   * outlier — e.g. `avg(last_10m)` over a percentile computed on a handful of
+   * requests per interval, where one slow call moves the window average by
+   * multiples of the threshold.
+   *
+   * Distinct from ThresholdTooLoose because the remedies are opposites:
+   * tightening or loosening the number changes nothing here. The fix is the
+   * window function (`avg(...)` -> `min(...)`, `require_full_window`) or the
+   * query's scope. Without this type such a monitor falls through
+   * `issueTypeFrom`'s default to ThresholdTooLoose, and the label then implies
+   * the one change that cannot work.
+   */
+  AggregationWindowMismatch: "aggregation_window_mismatch",
 } as const;
 export type IssueType = (typeof IssueType)[keyof typeof IssueType];
 
@@ -231,6 +245,39 @@ export const TriggerStatus = {
   Blocked: "blocked",
 } as const;
 export type TriggerStatus = (typeof TriggerStatus)[keyof typeof TriggerStatus];
+
+/**
+ * Lifecycle of one on-demand monitor analysis.
+ *
+ * `Expired` exists so a run that never came back cannot be mistaken for one
+ * that found nothing. A clock may only ever move a row to Expired — never to
+ * Done and never to Failed — because a deadline is evidence about our patience,
+ * not about the analysis. This is the same lesson as the automation triggers,
+ * where a fixed settle window silently declared runs finished.
+ */
+export const AnalysisStatus = {
+  /** Row written, evidence collection not started. */
+  Queued: "queued",
+  /** Collecting evidence, or waiting on the interpretation call. */
+  Running: "running",
+  /** Interpreted and persisted as a recommendation. */
+  Done: "done",
+  /** Collection or interpretation failed. `error` says how, sanitized. */
+  Failed: "failed",
+  /** No terminal state observed before the deadline. Says nothing about why. */
+  Expired: "expired",
+} as const;
+export type AnalysisStatus =
+  (typeof AnalysisStatus)[keyof typeof AnalysisStatus];
+
+/** True when no further state change can arrive for an analysis. */
+export function isTerminalAnalysisStatus(status: string): boolean {
+  return (
+    status === AnalysisStatus.Done ||
+    status === AnalysisStatus.Failed ||
+    status === AnalysisStatus.Expired
+  );
+}
 
 /**
  * Availability of a rotation member, from the handoff page's coverage check.
