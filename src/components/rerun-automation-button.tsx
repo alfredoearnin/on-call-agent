@@ -26,11 +26,22 @@ export function RerunAutomationButton({
   mode,
   missingEnv,
   warning,
+  label = "Re-run",
+  pendingLabel = "Triggering…",
+  idleTitle,
 }: {
   automationKey: string;
   mode: TriggerMode;
   missingEnv: string[];
   warning: string | null;
+  /**
+   * Button text. Defaults to "Re-run", which reads correctly in Settings next
+   * to a run history and badly anywhere else — this automation is also offered
+   * from the monitors list, where nothing has run yet.
+   */
+  label?: string;
+  pendingLabel?: string;
+  idleTitle?: string;
 }) {
   const [isPending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -57,11 +68,13 @@ export function RerunAutomationButton({
         title={
           mode === "blocked"
             ? `Set ${missingEnv.join(" and ")} in .env.local to enable re-runs`
-            : (warning ?? "Start a new run of this automation in Cursor")
+            : (warning ??
+              idleTitle ??
+              "Start a new run of this automation in Cursor")
         }
       >
         <Play className={cn("h-4 w-4", isPending && "animate-pulse")} />
-        {isPending ? "Triggering…" : "Re-run"}
+        {isPending ? pendingLabel : label}
       </Button>
       {msg && (
         <span className="max-w-sm text-right text-xs text-muted-foreground">
