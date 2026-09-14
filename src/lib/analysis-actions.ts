@@ -73,15 +73,59 @@ async function requestCauseInvestigation(
   service: string | undefined,
 ): Promise<boolean> {
   if (!canTriggerAutomation(AutomationKey.CauseInvestigation)) return false;
-  const res = await triggerAutomationAction(AutomationKey.CauseInvestigation, {
-    monitorId,
-    monitorName,
-    service: service ?? null,
-    requestedBy: "on-call dashboard",
-    // Named so the prompt can key off it rather than guessing at the shape.
-    intent: "investigate_monitor_cause",
-  });
-  return res.ok;
+  try {
+    const res = await triggerAutomationAction(AutomationKey.CauseInvestigation, {
+      monitorId,
+      monitorName,
+      service: service ?? null,
+      requestedBy: "on-call dashboard",
+      // Named so the prompt can key off it rather than guessing at the shape.
+      intent: "investigate_monitor_cause",
+    });
+    return res.ok;
+  } catch (err) {
+    // Best-effort really does mean best-effort: the rules have already run and
+    // been stored, and losing that to a webhook problem would be the worse
+    // outcome of the two.
+    logFailure("requestCauseInvestigation", err);
+    return false;
+  }
+}
+
+/**
+ * Secrets that must never reach a log line, whatever threw.
+ *
+ * An HttpError embeds the full request URL, and a Cursor webhook URL is a
+ * private endpoint; a Cursor key is `crsr_` followed by hex. Scrubbing by
+ * pattern rather than by call site means a new throw site cannot leak one by
+ * omission.
+ */
+function scrubSecrets(text: string): string {
+  return text
+    .replace(/crsr_[A-Za-z0-9]+/g, "crsr_<redacted>")
+    .replace(/https:\/\/[^\s"']*automations\/webhook\/[^\s"']*/g, "<webhook url>")
+    .replace(/\b[A-Fa-f0-9]{32,}\b/g, "<hex>");
+}
+
+/**
+ * Record the real failure server-side, where an operator cannot see it but a
+ * developer can.
+ *
+ * The sanitized message returned to the UI is deliberately just a class name,
+ * which is right for the browser and useless for debugging: a
+ * `PrismaClientUnknownRequestError` reached the dashboard with its cause
+ * nowhere, because this catch swallowed it and returned a label. Logging the
+ * scrubbed original is the other half of that trade.
+ */
+function logFailure(context: string, err: unknown): void {
+  const detail =
+    err instanceof Error
+      ? `${err.name}: ${scrubSecrets(err.message)}`
+      : scrubSecrets(String(err));
+  console.error(`[monitor-analysis] ${context} — ${detail}`);
+  if (err instanceof Error && err.stack) {
+    console.error(scrubSecrets(err.stack));
+  }
 }
 
 /**
@@ -102,14 +146,33 @@ function sanitizeFailure(err: unknown): string {
   return "Analysis failed.";
 }
 
-/** Move any run that has been in flight too long to a terminal, honest state. */
+/**
+ * Move any run that has been in flight too long to a terminal, honest state.
+ *
+ * Reads before writing, and this is load-bearing rather than an optimisation.
+ * Two pages call this on every render, and the analysis action calls
+ * `revalidatePath` on those same pages — so an unconditional `updateMany` made
+ * every page view a database write, and a write that lands while the action is
+ * still writing. SQLite here runs in `delete` journal mode, which locks the
+ * whole database rather than a page, and the collision surfaces as
+ * `PrismaClientUnknownRequestError` (SQLITE_BUSY) from whichever side lost.
+ *
+ * Almost every call has nothing to reconcile, so almost every call is now a
+ * read that takes no write lock at all.
+ */
 export async function reconcileStaleAnalyses(): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_AFTER_MINUTES * 60_000);
-  await prisma.monitorAnalysis.updateMany({
+  const stale = await prisma.monitorAnalysis.findMany({
     where: {
       status: { in: [AnalysisStatus.Queued, AnalysisStatus.Running] },
       requestedAt: { lt: cutoff },
     },
+    select: { id: true },
+  });
+  if (stale.length === 0) return;
+
+  await prisma.monitorAnalysis.updateMany({
+    where: { id: { in: stale.map((s) => s.id) } },
     data: {
       status: AnalysisStatus.Expired,
       observedAt: new Date(),
@@ -195,6 +258,7 @@ export async function requestMonitorAnalysisAction(
   } catch (err) {
     // Never throw out of a server action: a raw 500 leaves the operator unable
     // to tell whether any of the work happened.
+    logFailure(`requestMonitorAnalysisAction(${rawMonitorId})`, err);
     return { ok: false, message: sanitizeFailure(err) };
   }
 }
@@ -307,6 +371,7 @@ async function runAnalysis(monitorId: string): Promise<AnalysisActionResult> {
           : `Analysed: ${recs.length} recommendation(s) — see below.`) + agentNote,
     };
   } catch (err) {
+    logFailure(`runAnalysis(${monitorId})`, err);
     await prisma.monitorAnalysis.update({
       where: { id: analysis.id },
       data: {
