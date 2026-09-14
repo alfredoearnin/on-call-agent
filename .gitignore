@@ -67,3 +67,14 @@ prisma/oncall.db-shm
 
 # Scheduler runtime lock
 .sync.lock
+
+# Editor swap and backup files.
+#
+# A Vim swap file holds the full contents of the file being edited, so
+# `.env.local.swp` carries every secret `.env.local` does -- while `.env.local`
+# itself is ignored and the swap file was not. One `git add -A` while the file
+# was open would have committed the credentials it exists to keep out.
+*.swp
+*.swo
+*~
+.DS_Store
