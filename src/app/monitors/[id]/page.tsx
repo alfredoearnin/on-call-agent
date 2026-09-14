@@ -7,7 +7,6 @@ import {
   getSyncSettings,
 } from "@/lib/queries";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
-import { analysisEnvNames, canInterpret } from "@/lib/analysis/secrets";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,11 +44,11 @@ export default async function MonitorPage({
       ? "demo"
       : "blocked";
 
-  // Analysis needs both halves: evidence from Datadog and an interpretation.
-  const missingAnalysisEnv = [
-    ...(hasDatadogRead(cfg) ? [] : ["DD_API_KEY", "DD_APP_KEY"]),
-    ...(canInterpret() ? [] : analysisEnvNames()),
-  ];
+  // The analysis is rule-based, so the Datadog read credentials are the whole
+  // requirement — there is no model to configure and no third-party runner.
+  const missingAnalysisEnv = hasDatadogRead(cfg)
+    ? []
+    : ["DD_API_KEY", "DD_APP_KEY"];
   const analyzeMode: "real" | "blocked" =
     missingAnalysisEnv.length === 0 ? "real" : "blocked";
 

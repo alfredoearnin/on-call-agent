@@ -12,13 +12,43 @@ import type {
 } from "./monitor-query";
 
 /**
+ * Which sources actually answered.
+ *
+ * Load-bearing, not bookkeeping. A count of zero firings and an unknown firing
+ * history are different claims, and collapsing them is how "this monitor never
+ * pages" gets asserted about a monitor that paged fourteen times. Every
+ * consumer must be able to tell the two apart, and say so.
+ */
+export interface EvidenceSources {
+  /**
+   * Where the firing history came from.
+   *
+   * `datadog_only` is the common case in practice: Datadog's own alert events
+   * carry when a monitor fired and at which transition, but nothing about who
+   * was paged or how fast they answered — that lives only in incident.io. It is
+   * enough to locate the spikes and replay a rule, and not enough to say
+   * anything about on-call burden.
+   */
+  pageHistory:
+    | "available"
+    | "datadog_only"
+    | "not_configured"
+    | "failed";
+  /** Datadog: the alerting metric's own series. */
+  metric: "available" | "unavailable";
+  /** Datadog: the metric split by resource_name. */
+  perResource: "available" | "unavailable";
+  /** Datadog: CPU throttling, restarts, memory. */
+  infra: "available" | "unavailable";
+}
+
+/**
  * The evidence one monitor's analysis rests on.
  *
- * Gathered deterministically from Datadog and incident.io, then handed to a
- * model for interpretation. The split matters: a model that cannot query cannot
- * invent a metric, and everything below is reproducible from the same two APIs
- * at the same timestamps. It is also the artifact a reviewer checks the
- * recommendation against, which is why it is persisted with the analysis.
+ * Gathered deterministically from Datadog and incident.io. Everything here is
+ * reproducible from the same APIs at the same timestamps, which is what lets a
+ * reviewer check a recommendation against the numbers rather than trust it —
+ * and why the bundle is persisted with the analysis.
  *
  * Carries metric aggregates, alert metadata and responder display names. Never
  * request bodies, customer identifiers, or email addresses.
@@ -27,6 +57,7 @@ export interface MonitorEvidence {
   collectedAtIso: string;
   window: { fromIso: string; toIso: string; days: number };
   timezone: string;
+  sources: EvidenceSources;
   monitor: MonitorFacts;
   pages: PageFacts;
   metric: MetricFacts;
@@ -77,6 +108,18 @@ export interface Page {
 }
 
 export interface PageFacts {
+  /**
+   * False when the firing history could not be read at all. Every count below
+   * is then meaningless rather than zero, and callers must not reason from
+   * them.
+   */
+  historyAvailable: boolean;
+  /**
+   * False when nothing is known about the pages themselves — who was woken,
+   * how fast they acknowledged, how many landed out of hours. True firing
+   * history with no escalation data is normal when only Datadog answered.
+   */
+  escalationsAvailable: boolean;
   firings: Firing[];
   totalFirings: number;
   byLevel: Record<string, number>;
@@ -234,6 +277,41 @@ export function shapeFirings(
     .sort((a, b) => a.atIso.localeCompare(b.atIso));
 }
 
+/**
+ * Firings from Datadog's own alert events, when incident.io cannot answer.
+ *
+ * Datadog emits one event per transition, including the recoveries. Only the
+ * transitions *into* a firing state are firings; counting the recoveries would
+ * double every episode. The event carries no resolution timestamp, so
+ * self-resolve time is unknown here rather than zero.
+ */
+export function shapeFiringsFromEvents(
+  events: { date_happened?: number; title?: string; monitor_id?: number }[],
+  monitorId: string,
+  timezone: string,
+): Firing[] {
+  return events
+    .filter((e) => String(e.monitor_id ?? "") === monitorId)
+    .map((e): Firing | undefined => {
+      if (!e.date_happened) return undefined;
+      const level = levelFromTitle(e.title);
+      // Recovered / OK transitions are the end of a firing, not one of them.
+      if (/recover|ok/i.test(level)) return undefined;
+      const at = new Date(e.date_happened * 1000);
+      if (Number.isNaN(at.getTime())) return undefined;
+      const local = DateTime.fromJSDate(at, { zone: timezone });
+      return {
+        atIso: at.toISOString(),
+        localHour: local.hour,
+        localIso: local.toISO() ?? at.toISOString(),
+        level,
+        hadIncident: false,
+      };
+    })
+    .filter((f): f is Firing => f !== undefined)
+    .sort((a, b) => a.atIso.localeCompare(b.atIso));
+}
+
 export function shapePages(
   escalations: IncidentIoEscalation[],
   timezone: string,
@@ -261,7 +339,12 @@ export function shapePages(
     .sort((a, b) => a.atIso.localeCompare(b.atIso));
 }
 
-export function shapePageFacts(firings: Firing[], pages: Page[]): PageFacts {
+export function shapePageFacts(
+  firings: Firing[],
+  pages: Page[],
+  historyAvailable = true,
+  escalationsAvailable = historyAvailable,
+): PageFacts {
   const byLevel: Record<string, number> = {};
   for (const f of firings) byLevel[f.level] = (byLevel[f.level] ?? 0) + 1;
 
@@ -275,6 +358,8 @@ export function shapePageFacts(firings: Firing[], pages: Page[]): PageFacts {
     .filter((s): s is number => s != null);
 
   return {
+    historyAvailable,
+    escalationsAvailable,
     firings,
     totalFirings: firings.length,
     byLevel,

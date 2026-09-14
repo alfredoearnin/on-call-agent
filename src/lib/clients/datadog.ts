@@ -95,6 +95,54 @@ export class DatadogClient {
     return res.events ?? [];
   }
 
+  /**
+   * Alert events over a long range, fetched in chunks.
+   *
+   * The v1 events API will not accept a wide window — a 60-day range comes back
+   * as HTTP 400 — and it caps a response at 1000 events, which it does silently:
+   * a 30-day query for one team returns exactly 1000 and simply omits the rest.
+   * Either failure mode alone turns "this monitor fired eighteen times" into
+   * "this monitor never fired", so a caller wanting real history has to slice
+   * the range itself.
+   *
+   * Chunks are fetched a few at a time rather than all at once, to stay
+   * courteous to the API; a chunk that fails is skipped rather than failing the
+   * whole range, because partial history beats none.
+   */
+  async searchAlertEventsRange(
+    fromEpoch: number,
+    toEpoch: number,
+    chunkDays = 5,
+    concurrency = 4,
+  ): Promise<DatadogEvent[]> {
+    const chunkSeconds = chunkDays * 86_400;
+    const chunks: [number, number][] = [];
+    for (let start = fromEpoch; start < toEpoch; start += chunkSeconds) {
+      chunks.push([start, Math.min(start + chunkSeconds, toEpoch)]);
+    }
+
+    const out: DatadogEvent[] = [];
+    for (let i = 0; i < chunks.length; i += concurrency) {
+      const batch = chunks.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(([s, e]) =>
+          this.searchAlertEvents(s, e).catch(() => [] as DatadogEvent[]),
+        ),
+      );
+      for (const r of results) out.push(...r);
+    }
+
+    // Chunk boundaries are inclusive at both ends, so an event landing exactly
+    // on one appears twice.
+    const seen = new Set<string>();
+    return out.filter((e) => {
+      const key = e.id_str ?? String(e.id ?? `${e.date_happened}-${e.title}`);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   /** Query a metric timeseries for baseline grounding (p50/p90/max). */
   async queryMetric(
     query: string,

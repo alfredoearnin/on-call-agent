@@ -12,10 +12,12 @@ import {
   analyzePercentileStability,
   analyzeProbeContamination,
   shapeFirings,
+  shapeFiringsFromEvents,
   shapePageFacts,
   shapePages,
   shapeResourceSeries,
   summarize,
+  type EvidenceSources,
   type MonitorEvidence,
   type ResourceSeries,
 } from "./evidence";
@@ -107,6 +109,16 @@ async function tryQuery(
   }
 }
 
+async function tryEvents(
+  fn: () => Promise<{ date_happened?: number; title?: string; monitor_id?: number }[]>,
+): Promise<{ date_happened?: number; title?: string; monitor_id?: number }[] | undefined> {
+  try {
+    return await fn();
+  } catch {
+    return undefined;
+  }
+}
+
 async function tryGrouped(
   fn: () => Promise<Map<string, MetricPoint[]>>,
 ): Promise<Map<string, MetricPoint[]> | undefined> {
@@ -142,19 +154,45 @@ export async function collectMonitorEvidence(
   const timezone = cfg.team.timezone;
   let firings = shapeFirings([], timezone);
   let pages = shapePages([], timezone);
+  let pageHistory: EvidenceSources["pageHistory"] = "not_configured";
 
   if (hasIncidentIo(cfg) && service) {
     const io = new IncidentIoClient(cfg);
-    const [alerts, escalations] = await Promise.all([
-      io.listAlertsForService(service, from),
-      io.listEscalations(from),
-    ]);
-    firings = shapeFirings(alerts, timezone);
-    const alertIds = new Set(alerts.map((a) => a.id));
-    pages = shapePages(
-      escalations.filter((e) => !e.alert_id || alertIds.has(e.alert_id)),
-      timezone,
+    try {
+      const [alerts, escalations] = await Promise.all([
+        io.listAlertsForService(service, from),
+        io.listEscalations(from),
+      ]);
+      firings = shapeFirings(alerts, timezone);
+      const alertIds = new Set(alerts.map((a) => a.id));
+      pages = shapePages(
+        escalations.filter((e) => !e.alert_id || alertIds.has(e.alert_id)),
+        timezone,
+      );
+      pageHistory = "available";
+    } catch {
+      // A rejected read must not become "this monitor never fired". The rest of
+      // the analysis still stands on the monitor's config and its metric.
+      pageHistory = "failed";
+    }
+  }
+
+  // Datadog knows when the monitor fired even when incident.io cannot say who
+  // was paged for it. Without this the firing timestamps are missing, and with
+  // them go the narrow windows that expose a spike's per-endpoint shape and the
+  // series the counterfactual replays — so an unconfigured incident.io would
+  // otherwise disable most of the analysis rather than just its on-call half.
+  if (pageHistory !== "available") {
+    const events = await tryEvents(() =>
+      dd.searchAlertEventsRange(epoch(from), epoch(now)),
     );
+    if (events && events.length > 0) {
+      const derived = shapeFiringsFromEvents(events, monitorId, timezone);
+      if (derived.length > 0) {
+        firings = derived;
+        pageHistory = "datadog_only";
+      }
+    }
   }
 
   // --- Metric: wide baseline, then each firing at fine resolution ---------
@@ -292,6 +330,12 @@ export async function collectMonitorEvidence(
       days: BASELINE_DAYS,
     },
     timezone,
+    sources: {
+      pageHistory,
+      metric: baseline ? "available" : "unavailable",
+      perResource: byResource ? "available" : "unavailable",
+      infra: infra ? "available" : "unavailable",
+    },
     monitor: {
       id: String(monitor.id),
       name: monitor.name,
@@ -304,7 +348,12 @@ export async function collectMonitorEvidence(
       options: monitor.options,
       parsed,
     },
-    pages: shapePageFacts(firings, pages),
+    pages: shapePageFacts(
+      firings,
+      pages,
+      pageHistory === "available" || pageHistory === "datadog_only",
+      pageHistory === "available",
+    ),
     metric: { query: metricQuery, baseline, byResource, volume },
     infra,
     findings: {
