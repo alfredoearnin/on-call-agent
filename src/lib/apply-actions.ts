@@ -15,6 +15,7 @@ import type {
   ProposedPatch,
 } from "@/lib/ingest/types";
 import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
 
 /** Which Monitor column a patch target writes to locally. */
 type PatchField = "message" | "query" | "priority" | "options";
@@ -151,6 +152,13 @@ export async function previewApplyAction(
   if (!patch) {
     return { ok: false, message: "The stored change is malformed and was not applied." };
   }
+  // Checked here and not only in the apply action: the preview is what the
+  // operator reads before deciding, so a patch that must not be applied has to
+  // say so instead of rendering a plausible diff behind a live button.
+  const state = patchState(patch, rec.monitor);
+  if (state.kind === "already_applied" || state.kind === "stale") {
+    return { ok: false, message: state.message };
+  }
   const branch = branchFor(patch, scope);
   if (!branch && patch.target !== "priority" && patch.target !== "options") {
     return { ok: false, message: "No change defined for this scope." };
@@ -235,6 +243,16 @@ export async function applyRecommendationAction(
     return { ok: false, message: "The stored change is malformed and was not applied." };
   }
   const monitor = rec.monitor;
+
+  // Re-checked on the write path rather than trusted from the preview: the two
+  // are separate requests, and this is the last point before a credentialed PUT.
+  const state = patchState(patch, monitor);
+  if (state.kind === "already_applied") {
+    return { ok: false, noop: true, message: `No-op: ${state.message}` };
+  }
+  if (state.kind === "stale") {
+    return { ok: false, message: state.message };
+  }
 
   // Compute before/after + the Datadog PUT body.
   let field: "message" | "query" | "priority" | "options" = patch.target;

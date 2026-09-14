@@ -41,6 +41,18 @@ export const ProposedPatchSchema = z
       )
       .min(1)
       .optional(),
+    /**
+     * Fingerprint of the field this patch was computed from, so the apply path
+     * can tell "still describes the monitor" from "described it an hour ago".
+     * Optional: patches stored before this existed carry none, and are judged
+     * by the already-applied check alone. See patch-state.ts.
+     */
+    baseline: z
+      .object({
+        field: z.enum(["message", "query", "priority", "options"]),
+        hash: z.string().min(8),
+      })
+      .optional(),
   })
   .refine(
     (p) =>

@@ -381,6 +381,27 @@ export function shapePageFacts(
   };
 }
 
+/**
+ * Firings at or after an instant, for the current on-call week.
+ *
+ * The evidence window is 60 days, and the feedback loop reads a *week* —
+ * "applied, and did the noise come back?". Handing it the 60-day total made
+ * every applied recommendation permanently `regressed`, because a historical
+ * count cannot fall to zero no matter what the change fixed.
+ *
+ * An unparseable timestamp is not counted. It would otherwise land inside the
+ * week by accident (`new Date("")` is NaN, and every comparison against NaN is
+ * false) — which is the safe direction here, but only by luck, so it is
+ * explicit.
+ */
+export function countFiringsSince(firings: Firing[], since: Date): number {
+  const from = since.getTime();
+  return firings.filter((f) => {
+    const at = new Date(f.atIso).getTime();
+    return Number.isFinite(at) && at >= from;
+  }).length;
+}
+
 export function shapeResourceSeries(
   bySeries: Map<string, MetricPoint[]>,
 ): ResourceSeries[] {

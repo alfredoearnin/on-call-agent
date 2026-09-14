@@ -76,6 +76,23 @@ export function isSettledRecommendation(status: string): boolean {
   );
 }
 
+/**
+ * True when the status was reached by observing what a change did, rather than
+ * by classifying a monitor's behaviour.
+ *
+ * A feedback state outranks anything a fresh pass computes: the ingest already
+ * refuses to downgrade one, and the analysis path did not — so re-analysing an
+ * applied monitor reset its recommendations to `recommend` and handed back the
+ * patches that had just been applied.
+ */
+export function isFeedbackStatus(status: string): boolean {
+  return (
+    status === RecommendationStatus.Applied ||
+    status === RecommendationStatus.Validated ||
+    status === RecommendationStatus.Regressed
+  );
+}
+
 /** Confidence of a recommendation. */
 export const Confidence = {
   High: "high",
@@ -295,6 +312,14 @@ export const AnalysisStatus = {
   Failed: "failed",
   /** No terminal state observed before the deadline. Says nothing about why. */
   Expired: "expired",
+  /**
+   * A change was applied to this monitor while the run was collecting, so its
+   * evidence describes a configuration that no longer exists. Discarded rather
+   * than persisted: the patches would be find/replace against the pre-apply
+   * text, and the upsert would reset the recommendation the apply had just
+   * marked applied.
+   */
+  Superseded: "superseded",
 } as const;
 export type AnalysisStatus =
   (typeof AnalysisStatus)[keyof typeof AnalysisStatus];
@@ -304,7 +329,8 @@ export function isTerminalAnalysisStatus(status: string): boolean {
   return (
     status === AnalysisStatus.Done ||
     status === AnalysisStatus.Failed ||
-    status === AnalysisStatus.Expired
+    status === AnalysisStatus.Expired ||
+    status === AnalysisStatus.Superseded
   );
 }
 

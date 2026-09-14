@@ -19,6 +19,8 @@ import { AlertCard } from "@/components/alert-card";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { RevertButton } from "@/components/revert-button";
 import { getMonitorEdits } from "@/lib/monitor-edits";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
 import { MonitorEditCard } from "@/components/monitor-edit-card";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 import { AppliedChangeStatus } from "@/lib/constants";
@@ -252,6 +254,7 @@ export default async function MonitorPage({
               key={rec.id}
               rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
               applyMode={applyMode}
+              patchState={patchState(parseStoredPatch(rec.patchJson), monitor)}
             />
           ))}
         </section>
@@ -340,6 +343,7 @@ export default async function MonitorPage({
                 key={rec.id}
                 rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
                 applyMode={applyMode}
+                patchState={patchState(parseStoredPatch(rec.patchJson), monitor)}
               />
             ))}
           </div>

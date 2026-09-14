@@ -88,6 +88,11 @@ export interface PatchOption {
 export interface ProposedPatch {
   /** Which monitor field the change edits. */
   target: "message" | "query" | "priority" | "options";
+  /**
+   * Fingerprint of the target field as it was when the patch was computed.
+   * Absent on patches stored before baselines existed.
+   */
+  baseline?: { field: "message" | "query" | "priority" | "options"; hash: string };
   /** Transform for the prod branch/scope of the monitor. */
   prod?: PatchBranch;
   /** Transform for the dev branch/scope of the monitor. */

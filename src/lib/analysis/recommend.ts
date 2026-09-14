@@ -1,5 +1,6 @@
 import { Confidence, IssueType } from "@/lib/constants";
 import type { ProposedPatch } from "@/lib/ingest/types";
+import { baselineFor } from "@/lib/ingest/patch-state";
 import type { MonitorEvidence } from "./evidence";
 
 /**
@@ -88,10 +89,14 @@ function warnRoutingRecommendation(
   // One find/replace edits one handle. With several, the patch would fix only
   // the first and read as though it had fixed them all, so it is withheld and
   // the recommendation says what to do by hand.
+  // The baseline is the message this patch was derived from. It matters most
+  // for this rule: the replacement contains the `find`, so once applied the
+  // transform matches its own output and nests. See patch-state.ts.
   const patch: ProposedPatch | undefined =
     handles.length === 1
       ? {
           target: "message",
+          baseline: baselineFor("message", { message: evidence.monitor.message }),
           prod: {
             find: handles[0],
             replace: `{{#is_alert}}${handles[0]}{{/is_alert}}`,
@@ -201,7 +206,11 @@ function aggregationRecommendation(
       : `Stops spikes shorter than the evaluation window from firing. ${historyCaveat(evidence)}`,
     before: evidence.monitor.query,
     after: evidence.monitor.query.split(find).join(replace),
-    patch: { target: "query", prod: { find, replace } },
+    patch: {
+      target: "query",
+      baseline: baselineFor("query", { query: evidence.monitor.query }),
+      prod: { find, replace },
+    },
     followUps: [
       {
         kind: "investigation",
@@ -295,6 +304,7 @@ function probeContaminationRecommendation(
     after: `${parsed.scope},${exclusions}`,
     patch: {
       target: "query",
+      baseline: baselineFor("query", { query: evidence.monitor.query }),
       prod: { find: `{${parsed.scope}}`, replace: `{${parsed.scope},${exclusions}}` },
     },
     followUps,

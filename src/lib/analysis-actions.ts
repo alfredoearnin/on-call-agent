@@ -5,7 +5,9 @@ import { prisma } from "@/lib/db";
 import { getConfig } from "@/lib/config";
 import {
   AnalysisStatus,
+  AppliedChangeStatus,
   RecommendationStatus,
+  isFeedbackStatus,
   isTerminalAnalysisStatus,
 } from "@/lib/constants";
 import {
@@ -19,7 +21,11 @@ import {
   type ProposedRule,
   type WindowFn,
 } from "@/lib/analysis/counterfactual";
-import type { MonitorEvidence } from "@/lib/analysis/evidence";
+import {
+  countFiringsSince,
+  type MonitorEvidence,
+} from "@/lib/analysis/evidence";
+import { resolveWindow } from "@/lib/ingest/window";
 import { parseMonitorQuery } from "@/lib/analysis/monitor-query";
 import {
   recommendFromEvidence,
@@ -324,6 +330,40 @@ async function runAnalysis(monitorId: string): Promise<AnalysisActionResult> {
     const { evidence, episodes, monitor } =
       await collectMonitorEvidence(monitorId);
 
+    // Collection reads Datadog over several seconds. An Apply landing inside
+    // that window leaves this run holding the pre-apply configuration, and
+    // nothing downstream would notice: the config write below would put the old
+    // query and message back on the local row, and the upsert would overwrite
+    // the recommendation the apply had just marked applied — resetting it to
+    // `recommend` with a find/replace that now matches its own replacement.
+    // Nothing collected here can be trusted once that has happened, so the run
+    // is discarded whole rather than partly believed.
+    const appliedDuringRun = await prisma.appliedChange.count({
+      where: {
+        monitorId,
+        status: AppliedChangeStatus.Applied,
+        appliedAt: { gt: analysis.requestedAt },
+      },
+    });
+    if (appliedDuringRun > 0) {
+      await prisma.monitorAnalysis.update({
+        where: { id: analysis.id },
+        data: {
+          status: AnalysisStatus.Superseded,
+          observedAt: new Date(),
+          error:
+            "A change was applied to this monitor while the analysis was collecting, so its evidence describes the configuration from before that change. Nothing was stored. Run it again.",
+        },
+      });
+      revalidatePath(`/monitors/${monitorId}`);
+      return {
+        ok: false,
+        analysisId: analysis.id,
+        message:
+          "Discarded: a change was applied while this analysis was running, so its evidence is out of date. Run it again.",
+      };
+    }
+
     // Keep the live config locally: the options patch needs a before-state to
     // merge into, and Monitor.options is where the apply path looks for it.
     await prisma.monitor.updateMany({
@@ -433,6 +473,17 @@ interface PersistInput {
 async function persistRecommendation(input: PersistInput): Promise<string> {
   const { rec, evidence } = input;
 
+  // `firesThisWeek` is read by the feedback loop as "did the noise come back
+  // after this was applied?" and by computeStatus as this week's burden. The
+  // evidence window is 60 days, so the total cannot be written here: it never
+  // reaches zero, and every applied recommendation was flipped to `regressed`
+  // for that reason alone. Undefined when the history could not be read, which
+  // leaves any existing count alone rather than asserting a zero nobody
+  // measured.
+  const weeklyFires = evidence.pages.historyAvailable
+    ? countFiringsSince(evidence.pages.firings, resolveWindow().start)
+    : undefined;
+
   // Only state what was actually read. A count of zero and an unread source
   // are different claims, and printing the first for the second is how "this
   // monitor never woke anyone" gets asserted about a monitor nobody measured.
@@ -440,6 +491,7 @@ async function persistRecommendation(input: PersistInput): Promise<string> {
   if (evidence.pages.historyAvailable) {
     lines.push(
       `${evidence.pages.totalFirings} firing(s) over ${evidence.window.days}d;`,
+      `${weeklyFires ?? 0} this on-call week;`,
       `${evidence.pages.withIncident} incident(s);`,
     );
   } else {
@@ -486,8 +538,7 @@ async function persistRecommendation(input: PersistInput): Promise<string> {
       : rec.expectedImpact,
     evidence: lines.join(" "),
     confidence: rec.confidence,
-    status: RecommendationStatus.Recommend,
-    firesThisWeek: evidence.pages.totalFirings,
+    ...(weeklyFires !== undefined ? { firesThisWeek: weeklyFires } : {}),
     autoResolvedPct: evidence.pages.autoResolvedPct ?? null,
     nightPages: evidence.pages.pagesOvernight,
     lastFiredAt:
@@ -500,15 +551,31 @@ async function persistRecommendation(input: PersistInput): Promise<string> {
     patchJson: rec.patch ? JSON.stringify(rec.patch) : null,
   };
 
-  const row = await prisma.tuningRecommendation.upsert({
-    where: {
-      monitorKey_issueType: {
-        monitorKey: input.monitorId,
-        issueType: rec.issueType,
-      },
+  const key = {
+    monitorKey_issueType: {
+      monitorKey: input.monitorId,
+      issueType: rec.issueType,
     },
-    create: data,
-    update: data,
+  };
+
+  // Re-analysing refreshes the finding, never the verdict on a change someone
+  // already made. Writing `recommend` unconditionally undid the feedback state
+  // — an applied recommendation came back as outstanding work, with the patch
+  // that had just been applied to it. The ingest ledger has always had this
+  // rule; this path was written without it.
+  const existing = await prisma.tuningRecommendation.findUnique({
+    where: key,
+    select: { status: true },
+  });
+  const status =
+    existing && isFeedbackStatus(existing.status)
+      ? existing.status
+      : RecommendationStatus.Recommend;
+
+  const row = await prisma.tuningRecommendation.upsert({
+    where: key,
+    create: { ...data, status: RecommendationStatus.Recommend },
+    update: { ...data, status },
   });
   return row.id;
 }

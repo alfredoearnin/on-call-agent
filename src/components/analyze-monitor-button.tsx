@@ -45,6 +45,8 @@ function statusLine(last: LastAnalysis): string {
       return `Started ${ago}; no result was observed.`;
     case "failed":
       return last.error ? `Failed ${ago}: ${last.error}` : `Failed ${ago}.`;
+    case "superseded":
+      return `Discarded ${ago}: a change was applied while it was running. Run it again.`;
     default:
       return `Last run ${ago}.`;
   }

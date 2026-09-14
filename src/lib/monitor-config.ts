@@ -53,6 +53,17 @@ export function hashMonitorConfig(fields: MonitorConfigFields): string {
   return createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 16);
 }
 
+/**
+ * Fingerprint of one field's exact value.
+ *
+ * Separate from `hashMonitorConfig`, which covers every field at once: a patch
+ * baseline has to be per-field, or applying a message fix would invalidate a
+ * pending query fix and force a re-analysis that had nothing to re-read.
+ */
+export function hashFieldValue(value: string): string {
+  return createHash("sha1").update(value).digest("hex").slice(0, 16);
+}
+
 function fieldText(value: unknown): string {
   if (value === undefined || value === null || value === "") return "";
   if (typeof value === "string") return value;
