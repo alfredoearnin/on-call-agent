@@ -17,7 +17,10 @@
 import { getConfig, type AppConfig } from "@/lib/config";
 import { httpRequest, HttpError } from "@/lib/clients/http";
 import { AutomationKey } from "@/lib/constants";
-import { automationSecret } from "@/lib/automations/secrets";
+import {
+  automationSecret,
+  type AutomationSecret,
+} from "@/lib/automations/secrets";
 import { triggerFailureMessage } from "@/lib/automations/meta";
 
 export interface TriggerOutcome {
@@ -28,10 +31,24 @@ export interface TriggerOutcome {
   status?: number;
 }
 
-/** TRIGGER headers — the only outbound header set this client builds. */
-function triggerHeaders(cfg: AppConfig, apiKey: string): Record<string, string> {
-  const { authHeader, authScheme } = cfg.automations;
-  return { [authHeader]: authScheme ? `${authScheme} ${apiKey}` : apiKey };
+/**
+ * TRIGGER headers — the only outbound header set this client builds.
+ *
+ * The per-automation override wins over the global setting, because Cursor
+ * does not use one scheme for every webhook: the chain automations accept a
+ * bare `x-api-key` and the cause-investigation one answers that with HTTP 401
+ * and wants `Authorization: Bearer`. Changing the global value to satisfy one
+ * would have broken the others without saying so.
+ */
+function triggerHeaders(
+  cfg: AppConfig,
+  secret: AutomationSecret,
+): Record<string, string> {
+  const header = secret.authHeader ?? cfg.automations.authHeader;
+  const scheme = secret.authScheme ?? cfg.automations.authScheme;
+  return {
+    [header]: scheme ? `${scheme} ${secret.apiKey}` : secret.apiKey,
+  };
 }
 
 export class CursorAutomationsClient {
@@ -59,11 +76,12 @@ export class CursorAutomationsClient {
     label: string,
     payload: Record<string, unknown> = {},
   ): Promise<TriggerOutcome> {
-    const { webhookUrl, apiKey } = automationSecret(key);
+    const secret = automationSecret(key);
+    const { webhookUrl } = secret;
     try {
       await httpRequest<unknown>(webhookUrl, {
         method: "POST",
-        headers: triggerHeaders(this.cfg, apiKey),
+        headers: triggerHeaders(this.cfg, secret),
         // Cursor's docs do not specify a body for webhook triggers, so this
         // may be discarded on their side. `{}` remains the default and is the
         // minimal valid JSON payload, which also makes httpRequest set
