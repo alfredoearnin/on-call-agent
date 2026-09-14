@@ -200,7 +200,11 @@ export async function previewApplyAction(
  *  - Demo dry-run (no Datadog call) when in DEMO_MODE, so the apply -> validated
  *    feedback flow is demonstrable locally.
  *  - Blocked otherwise.
- * Records an AppliedChange audit row (before/after/operator/target) either way.
+ * Records an AppliedChange audit row (before/after/operator/target) either way,
+ * with `dryRun` telling the two apart. The status stays `applied` for a dry run
+ * on purpose — the feedback loop keys off it — so the flag is the only thing
+ * separating "changed in Datadog" from "changed nowhere", and DEMO_MODE
+ * defaults to true.
  */
 export async function applyRecommendationAction(
   recommendationId: string,
@@ -329,6 +333,7 @@ export async function applyRecommendationAction(
       diffJson: JSON.stringify({ field, before, after }),
       operator: cfg.apply.operator,
       status,
+      dryRun: !real,
       datadogResponse,
     },
   });
@@ -423,6 +428,7 @@ export async function revertAppliedChangeAction(
       afterJson: change.beforeJson,
       operator: cfg.apply.operator,
       status: AppliedChangeStatus.Reverted,
+      dryRun: !real,
       datadogResponse,
       revertsId: change.id,
     },

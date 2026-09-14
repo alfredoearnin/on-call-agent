@@ -500,7 +500,7 @@ documents everything.
 | --- | --- | --- |
 | `DATABASE_URL` | yes | SQLite path (`file:./oncall.db`). |
 | `SYNC_SOURCE` | no | `auto` (default) / `confluence` / `demo` / `live`. |
-| `DEMO_MODE` | no | Legacy toggle; `true` forces bundled sample data. |
+| `DEMO_MODE` | no | `true` (**the default**) forces bundled sample data, and makes Apply a dry run instead of refusing — see [Apply suggestion](#apply-suggestion-guarded-datadog-write). |
 | `TEAM_TAG` / `TEAM_LABEL` / `TIMEZONE` | no | Analysis scope (defaults mirror the agent prompt). |
 | `DD_SITE` | no | Datadog site (`datadoghq.com` = US1). |
 | `DD_API_KEY` / `DD_APP_KEY` | live only | Datadog **read** access. |
@@ -624,6 +624,15 @@ into a real monitor edit via the Datadog API. Guardrails:
 - Idempotency/drift guard: the current config is re-checked before writing; if it no
   longer matches the recorded "before", the apply no-ops with a warning.
 
+**Dry runs.** With `DEMO_MODE=true` — which is the default — Apply does not refuse.
+It takes the demo path: it writes the audit row and updates the local monitor, but
+never calls Datadog, so the `apply → validated` feedback loop can be walked through
+without credentials. Those rows keep `status: applied` on purpose (the feedback loop
+keys off that status), and carry `dryRun: true`; the audit trail and the config-edit
+card both label them, and `datadogResponse` reads `(demo dry-run — no Datadog write)`.
+**If a change you applied is not in Datadog, that label is why** — set
+`DEMO_MODE=false` to make Apply refuse loudly instead.
+
 > **Terraform / GitOps caveat:** if these monitors are managed as code, a direct API
 > edit can drift from state. The `AppliedChange` record gives you the exact
 > `before → after` to mirror back into Terraform.
@@ -720,6 +729,11 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   `SYNC_SOURCE=live`; a missing/unauthorized source degrades gracefully and is
   reported on the Settings page rather than failing the whole run.
 - **Apply button disabled** — set `APPLY_ENABLED=true` and `DD_APP_KEY_WRITE`.
+- **Apply said it worked and Datadog did not change** — it was a dry run.
+  `DEMO_MODE` defaults to `true`, and on that path Apply writes the audit row and
+  the local monitor without calling Datadog. Look for the **dry run** badge on the
+  audit row and **Dry run — not in Datadog** on the config-edit card. Set
+  `DEMO_MODE=false` and Apply refuses instead of pretending.
 - **`Datadog write failed: HTTP 401 for .../api/v1/monitor/<id>`** — a 32-character
   API key is in `DD_APP_KEY_WRITE`, which needs a 40-character *Application* key
   scoped `monitors_write`. See [Getting the credentials](#getting-the-credentials).

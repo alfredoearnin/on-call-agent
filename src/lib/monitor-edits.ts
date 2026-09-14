@@ -43,6 +43,15 @@ export interface MonitorEdit {
   diffs: FieldDiff[];
   why: EditWhy | null;
   note: EditNote | null;
+  /**
+   * True when this edit changed nothing in Datadog — a DEMO_MODE dry run.
+   *
+   * Always false for a Datadog-detected edit, which by definition came from a
+   * real config change. It matters on the apply path: a dry run lands here
+   * looking exactly like a live edit, complete with a before/after diff, and
+   * DEMO_MODE is on by default.
+   */
+  dryRun: boolean;
 }
 
 function parseJson(raw: string | null): unknown {
@@ -171,6 +180,7 @@ export async function getMonitorEdits(opts?: {
         diffs,
         why: whyFor(monitor, fieldsFromSnap(next)),
         note: noteByKey.get(`${monitor.id}:${next.hash}`) ?? null,
+        dryRun: false,
       });
     }
 
@@ -205,6 +215,7 @@ function appliedEdit(
     diffJson: string | null;
     recommendationId: string | null;
     operator: string;
+    dryRun: boolean;
   },
   noteByKey: Map<string, EditNote>,
 ): MonitorEdit {
@@ -220,7 +231,9 @@ function appliedEdit(
       }
     : {
         title: c.changeSummary,
-        summary: `Applied from the dashboard by ${c.operator}.`,
+        summary: c.dryRun
+          ? `Demo dry-run from the dashboard by ${c.operator} — Datadog was not called.`
+          : `Applied from the dashboard by ${c.operator}.`,
         source: "apply",
       };
   return {
@@ -237,6 +250,7 @@ function appliedEdit(
     diffs: diffsFromApplied(c.beforeJson, c.afterJson, c.diffJson),
     why,
     note: noteByKey.get(`${monitor.id}:${c.id}`) ?? null,
+    dryRun: c.dryRun,
   };
 }
 

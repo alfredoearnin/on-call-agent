@@ -56,6 +56,14 @@ export function MonitorEditCard({
           <Badge tone={fromDashboard ? "info" : "warn"} className="normal-case">
             {fromDashboard ? "Dashboard apply" : "Datadog (detected)"}
           </Badge>
+          {/* Without this the card is indistinguishable from a live edit: same
+              source badge, same before/after diff, and nothing saying the
+              monitor in Datadog still holds the "before". */}
+          {edit.dryRun ? (
+            <Badge tone="alert" className="normal-case">
+              Dry run — not in Datadog
+            </Badge>
+          ) : null}
           {edit.why?.source === "recommendation" ? (
             <Badge tone="ok">Matches recommendation</Badge>
           ) : null}

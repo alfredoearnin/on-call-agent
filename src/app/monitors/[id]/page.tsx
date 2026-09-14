@@ -136,9 +136,9 @@ export default async function MonitorPage({
                   <Badge
                     tone={
                       findings.report.verdict === "real_defect"
-                        ? "danger"
+                        ? "alert"
                         : findings.report.verdict === "noise_only"
-                          ? "success"
+                          ? "ok"
                           : "neutral"
                     }
                   >
@@ -154,7 +154,7 @@ export default async function MonitorPage({
                       "this is about the monitor you clicked" and "the agent
                       chose for itself". */}
                   {findings.report.receivedMonitorId === false && (
-                    <Badge tone="warning">
+                    <Badge tone="warn" className="normal-case">
                       agent selected this monitor itself
                     </Badge>
                   )}
@@ -176,7 +176,7 @@ export default async function MonitorPage({
                   </p>
                 )}
                 {findings.report.limitations.length > 0 && (
-                  <p className="text-xs text-warning">
+                  <p className="text-xs text-warn">
                     The agent could not: {findings.report.limitations.join("; ")}
                   </p>
                 )}
@@ -287,17 +287,28 @@ export default async function MonitorPage({
                 <div key={c.id} className="rounded-md border border-border p-3 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">{c.changeSummary}</span>
-                    <Badge
-                      tone={
-                        c.status === AppliedChangeStatus.Applied
-                          ? "info"
-                          : c.status === AppliedChangeStatus.Reverted
-                            ? "neutral"
-                            : "alert"
-                      }
-                    >
-                      {c.status}
-                    </Badge>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {/* A dry run keeps the status `applied` — the feedback
+                          loop keys off it — so the flag is what separates
+                          "Datadog changed" from "nothing changed", and
+                          DEMO_MODE is on unless someone turns it off. */}
+                      {c.dryRun && (
+                        <Badge tone="alert" className="normal-case">
+                          dry run
+                        </Badge>
+                      )}
+                      <Badge
+                        tone={
+                          c.status === AppliedChangeStatus.Applied
+                            ? "info"
+                            : c.status === AppliedChangeStatus.Reverted
+                              ? "neutral"
+                              : "alert"
+                        }
+                      >
+                        {c.status}
+                      </Badge>
+                    </div>
                   </div>
                   <div className="mt-1 text-muted-foreground">
                     {c.targetScope} · {c.operator} · {fmtDateTime(c.appliedAt, tz)}

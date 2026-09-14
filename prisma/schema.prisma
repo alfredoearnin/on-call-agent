@@ -268,6 +268,17 @@ model AppliedChange {
   diffJson         String?
   operator         String
   status           String    @default("applied") // AppliedChangeStatus
+  /// True when nothing was sent to Datadog — a demo dry-run.
+  ///
+  /// The status stays `applied` on purpose: DEMO_MODE exists so the
+  /// apply -> validated feedback loop can be demonstrated locally, and a
+  /// separate status would stop feedback.ts recognising these rows at all. The
+  /// hazard was that a dry run was then indistinguishable from a real write
+  /// except by reading the `datadogResponse` prose, while DEMO_MODE defaults to
+  /// true — so an install with Apply enabled but no write key recorded
+  /// "applied" for changes that never left the machine. This flag is the
+  /// difference, queryable rather than phrased.
+  dryRun           Boolean   @default(false)
   datadogResponse  String?
   error            String?
   appliedAt        DateTime  @default(now())
