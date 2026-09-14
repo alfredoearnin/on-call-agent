@@ -512,13 +512,101 @@ documents everything.
 | `OPERATOR_NAME` | no | Name recorded in the apply + trigger audit trails. |
 | `CURSOR_HEALTH_CHECK_WEBHOOK_URL` / `_API_KEY` | re-run only | Webhook trigger for the Health Check automation (**secrets**). |
 | `CURSOR_DASHBOARD_REFRESH_WEBHOOK_URL` / `_API_KEY` | re-run only | Webhook trigger for the daily-refresh automation (**secrets**). |
-| `CURSOR_WEBHOOK_AUTH_HEADER` / `_SCHEME` | no | Header the webhook key is sent in (default `x-api-key`, no scheme). Change if you get 401s. |
-| `CURSOR_HEALTH_CHECK_URL` / `CURSOR_DASHBOARD_REFRESH_URL` | no | cursor.com links shown on Settings (non-secret). |
+| `CURSOR_CAUSE_INVESTIGATION_WEBHOOK_URL` / `_API_KEY` | analyse only | Webhook trigger for the cause-investigation automation, fired by **Analyse** on a monitor (**secrets**). |
+| `CURSOR_WEBHOOK_AUTH_HEADER` / `_SCHEME` | no | Default header the webhook key is sent in (`x-api-key`, no scheme). |
+| `CURSOR_<AUTOMATION>_AUTH_HEADER` / `_SCHEME` | no | Per-automation override of the above. Cursor does not use one scheme for every webhook — see [Getting the credentials](#getting-the-credentials). |
+| `CURSOR_HEALTH_CHECK_URL` / `CURSOR_DASHBOARD_REFRESH_URL` / `CURSOR_CAUSE_INVESTIGATION_URL` | no | cursor.com links shown on Settings (non-secret). |
+| `CONFLUENCE_SPACE_KEY` | no | Space the dashboard searches for the agent's findings pages. |
 | `AUTOMATION_HOUR` / `_MINUTE` / `_TIMEZONE` / `_GRACE_MINUTES` | no | The earlier automation's daily slot (default 12:00 `America/Mexico_City`, 180 min grace) used for the health verdict. Set after the handoff so the closing week is complete before it is frozen. |
 | `HANDOFF_WEEKDAY` / `_HOUR` / `_MINUTE` / `_TIMEZONE` | no | When the rotation changes hands, which is the real boundary of an on-call week (default Tuesday 11:00 `America/Mexico_City`). Not midnight — see [The week boundary](#the-week-boundary). |
 
 Confluence and demo modes need **no** Datadog/incident.io/Jira keys — those are only
-for `live` mode and the Apply write path.
+for `live` mode, the Apply write path, and the per-monitor **Analyse** feature.
+
+---
+
+## Getting the credentials
+
+Every credential below is optional: the dashboard degrades to what it can read and
+says so on screen. This section exists because several of them fail in ways that
+do not name their own cause, and every error quoted here is one someone on this
+team actually hit.
+
+**Length is the fastest check.** Most of the confusion below is one credential
+pasted into another's slot, and the lengths differ:
+
+```bash
+# Prints names and lengths only — never values.
+awk -F= '/^(DD_|INCIDENT_IO_|JIRA_|CURSOR_)/ {v=$2; gsub(/^["'"'"']|["'"'"']$/,"",v); printf "%-42s length=%d\n", $1, length(v)}' .env.local
+```
+
+### Datadog — two different kinds of key
+
+This is the one that catches everyone. Datadog has **API keys** and **Application
+keys**, they live on different pages, they are different lengths, and the API
+rejects one used in place of the other.
+
+| Variable | What it is | Length | Where |
+| --- | --- | --- | --- |
+| `DD_API_KEY` | API key — identifies the org | **32** | Organization Settings → **API Keys** |
+| `DD_APP_KEY` | Application key — read access | **40** | Organization Settings → **Application Keys** |
+| `DD_APP_KEY_WRITE` | Application key scoped `monitors_write` | **40** | Same page, **New Key**, then set the scope |
+
+Every request sends both: the 32-character one as `DD-API-KEY` and the
+40-character one as `DD-APPLICATION-KEY`. The API Keys page says an API key is
+for the Agent to *submit* data — it cannot read or modify monitors.
+
+> **`Datadog write failed: HTTP 401 for .../api/v1/monitor/<id>`** when pressing
+> Apply almost always means a 32-character API key was pasted into
+> `DD_APP_KEY_WRITE`. Check the length. **401** is an invalid key; **403** is a
+> valid key missing the `monitors_write` scope.
+
+Keep the write key separate from the read key and scope it to `monitors_write`
+only — it can modify production monitors.
+
+### incident.io
+
+`INCIDENT_IO_API_KEY` — a Bearer token from incident.io settings.
+
+Without it the dashboard still works: **Analyse** falls back to Datadog's own
+alert events for the firing history. What is lost is everything only incident.io
+knows — who was paged, how fast they acknowledged, how many pages landed out of
+hours. The evidence then says *"Page and ack detail unavailable (from Datadog
+events; incident.io not configured)"* rather than reporting zero, because an
+unread source and a count of zero are different claims.
+
+### Atlassian (Jira **and** Confluence)
+
+`JIRA_EMAIL` plus `JIRA_API_TOKEN`, from
+<https://id.atlassian.com/manage-profile/security/api-tokens>. One pair covers
+both products — `hasConfluence()` is defined as `hasJira()`.
+
+Without them the Cause investigation card reads *"Atlassian credentials are not
+configured, so findings cannot be read"*. The agent still writes its page; the
+dashboard just cannot read it back.
+
+### Cursor automations — the auth header differs per automation
+
+Each automation needs its own `_WEBHOOK_URL` and `_API_KEY`, both shown once when
+the webhook trigger is saved.
+
+**They do not all authenticate the same way.** The two chain automations accept a
+bare `x-api-key`; the cause-investigation webhook answers that with HTTP 401 and
+wants `Authorization: Bearer`. That is why the header is configurable *per
+automation* and why changing the global `CURSOR_WEBHOOK_AUTH_HEADER` to fix one
+would silently break the others — a webhook trigger returning 2xx is the only
+signal any of them gives.
+
+> **`Cursor rejected the trigger … (HTTP 401)`** means the wrong header for that
+> automation. Set `CURSOR_<NAME>_AUTH_HEADER` and `_AUTH_SCHEME` for it rather
+> than the global pair. A failure carrying an HTTP status is safe to retry
+> immediately — Cursor refused the request and no run started.
+
+### Restart after any credential change
+
+Next reads `.env.local` at startup. A key added to a running server has no
+effect, and the symptom is a button that stays disabled or a 401 that looks like
+a bad key. Restart `npm run dev`.
 
 ---
 
@@ -632,6 +720,39 @@ the cron triggers a daily sync via `/api/ingest`. Until then the route returns 4
   `SYNC_SOURCE=live`; a missing/unauthorized source degrades gracefully and is
   reported on the Settings page rather than failing the whole run.
 - **Apply button disabled** — set `APPLY_ENABLED=true` and `DD_APP_KEY_WRITE`.
+- **`Datadog write failed: HTTP 401 for .../api/v1/monitor/<id>`** — a 32-character
+  API key is in `DD_APP_KEY_WRITE`, which needs a 40-character *Application* key
+  scoped `monitors_write`. See [Getting the credentials](#getting-the-credentials).
+  **403** instead means the key is right and the scope is missing. Either way the
+  monitor is untouched: the failure is recorded as an `AppliedChange` with status
+  `failed` and the recommendation stays at `recommend`.
+- **`Analysis failed (PrismaClientUnknownRequestError)`** on **Analyse** — the
+  database file was replaced while the server was running, which is what a branch
+  switch does here because `prisma/oncall.db` is committed. SQLite reports
+  extended code 1032, `SQLITE_READONLY_DBMOVED`: reads keep working from the old
+  handle, so only writes fail. Restart `npm run dev`. The message now says this
+  outright.
+- **`Unknown field '<x>' for select statement on model '<Y>'`** — the running
+  server holds a Prisma client generated before the last schema change or branch
+  switch. `npx prisma generate`, then restart the server. `npm test` and `tsc`
+  will both pass while this is broken, because they read the regenerated client
+  and the server does not.
+- **Analyse reports `0 firing(s)` for a monitor you know fires** — `INCIDENT_IO_API_KEY`
+  is unset *and* the Datadog event fallback found nothing. The events API rejects
+  ranges wider than about 60 days and silently caps a response at 1000 events, so
+  it is queried in five-day chunks; a failure there is reported as "firing history
+  unavailable", never as zero.
+- **Cause investigation card says findings cannot be read** — `JIRA_EMAIL` and
+  `JIRA_API_TOKEN` are unset. The agent's page exists; the dashboard cannot fetch
+  it. The card distinguishes that from "no page yet", "no structured block on the
+  page", and "Confluence unreachable", so read which one it says.
+- **The agent ran but investigated a monitor you did not click** — its findings
+  block reports `receivedMonitorId: false` and the card shows a warning. The
+  trigger did not deliver the payload, so the agent selected its own candidates;
+  see the payload section of [the prompt](./agents/).
+- **`Cursor rejected the trigger … (HTTP 401)`** — wrong auth header for that
+  automation. They differ; set the per-automation override rather than the global
+  one. See [Getting the credentials](#getting-the-credentials).
 - **No out-of-office warnings ever appear** — almost always the two-copy rule: the
   `Coverage check` step was added to the prompt in `agents/` but not pasted into the
   Health Check automation's Agent Instructions, so published pages carry no block.
