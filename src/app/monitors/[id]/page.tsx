@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getConfig, canApply } from "@/lib/config";
-import { getMonitorDetail, getSyncSettings } from "@/lib/queries";
+import { getConfig, canApply, hasDatadogRead } from "@/lib/config";
+import {
+  getLastMonitorAnalysis,
+  getMonitorDetail,
+  getSyncSettings,
+} from "@/lib/queries";
+import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
+import { analysisEnvNames, canInterpret } from "@/lib/analysis/secrets";
+import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCard } from "@/components/alert-card";
@@ -21,10 +28,14 @@ export default async function MonitorPage({
 }) {
   const { id } = await params;
   const cfg = getConfig();
-  const [monitor, settings, edits] = await Promise.all([
+  // A run the platform killed mid-request would otherwise sit in flight
+  // forever; this settles it to `expired` before the status line is rendered.
+  await reconcileStaleAnalyses();
+  const [monitor, settings, edits, lastAnalysis] = await Promise.all([
     getMonitorDetail(id),
     getSyncSettings(),
     getMonitorEdits({ monitorId: id }),
+    getLastMonitorAnalysis(id),
   ]);
   if (!monitor) notFound();
   const tz = settings?.timezone ?? cfg.team.timezone;
@@ -34,18 +45,48 @@ export default async function MonitorPage({
       ? "demo"
       : "blocked";
 
+  // Analysis needs both halves: evidence from Datadog and an interpretation.
+  const missingAnalysisEnv = [
+    ...(hasDatadogRead(cfg) ? [] : ["DD_API_KEY", "DD_APP_KEY"]),
+    ...(canInterpret() ? [] : analysisEnvNames()),
+  ];
+  const analyzeMode: "real" | "blocked" =
+    missingAnalysisEnv.length === 0 ? "real" : "blocked";
+
   return (
     <div className="space-y-6">
       <header>
         <Link href="/recommendations" className="text-xs text-primary hover:underline">
           ← Recommendations
         </Link>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold">{monitor.name}</h1>
-          <Badge tone={monitorStateTone(monitor.currentState)}>
-            {monitor.currentState}
-          </Badge>
-          <Badge tone={priorityTone(monitor.priority)}>{monitor.priority}</Badge>
+        <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">{monitor.name}</h1>
+            <Badge tone={monitorStateTone(monitor.currentState)}>
+              {monitor.currentState}
+            </Badge>
+            <Badge tone={priorityTone(monitor.priority)}>{monitor.priority}</Badge>
+          </div>
+          {/* In the header rather than beside the Recommendations list: that
+              section only renders when a recommendation already exists, and the
+              "Current configuration" card only when a query is stored — so
+              either would hide this button on exactly the monitors worth
+              analysing first. */}
+          <AnalyzeMonitorButton
+            monitorId={monitor.id}
+            mode={analyzeMode}
+            missingEnv={missingAnalysisEnv}
+            last={
+              lastAnalysis
+                ? {
+                    status: lastAnalysis.status,
+                    requestedAtIso: lastAnalysis.requestedAt.toISOString(),
+                    summary: lastAnalysis.resultSummary,
+                    error: lastAnalysis.error,
+                  }
+                : null
+            }
+          />
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Monitor {monitor.id}

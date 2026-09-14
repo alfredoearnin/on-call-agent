@@ -70,15 +70,32 @@ export interface PatchBranch {
   replace: string;
 }
 
+/**
+ * A structured value written to one key under a monitor's `options`.
+ *
+ * Options are JSON, not text, so find/replace does not reach them: turning
+ * `require_full_window` from false to true is not a string substitution. That
+ * gap is why a recommendation to require a full evaluation window — the natural
+ * companion to changing an averaged window to a minimum — could be written in
+ * prose but never applied.
+ */
+export interface PatchOption {
+  /** Key under `monitor.options`, e.g. `require_full_window`. */
+  key: string;
+  value: boolean | number | string;
+}
+
 export interface ProposedPatch {
   /** Which monitor field the change edits. */
-  target: "message" | "query" | "priority";
+  target: "message" | "query" | "priority" | "options";
   /** Transform for the prod branch/scope of the monitor. */
   prod?: PatchBranch;
   /** Transform for the dev branch/scope of the monitor. */
   dev?: PatchBranch;
   /** For priority target: the new numeric Datadog priority. */
   priorityValue?: number;
+  /** For options target: the option keys to set. Scope-independent. */
+  options?: PatchOption[];
 }
 
 export interface NormalizedRecommendation {

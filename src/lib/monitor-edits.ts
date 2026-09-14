@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { AppliedChangeStatus, MonitorEditSource } from "@/lib/constants";
 import type { ProposedPatch } from "@/lib/ingest/types";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
 import {
   diffMonitorConfig,
   recommendationExplainsEdit,
@@ -50,14 +51,6 @@ function parseJson(raw: string | null): unknown {
     return JSON.parse(raw);
   } catch {
     return undefined;
-  }
-}
-
-function safePatch(raw: string): ProposedPatch | null {
-  try {
-    return JSON.parse(raw) as ProposedPatch;
-  } catch {
-    return null;
   }
 }
 
@@ -272,7 +265,7 @@ function whyFor(
 ): EditWhy | null {
   for (const rec of monitor.recommendations) {
     const patch: ProposedPatch | null = rec.patchJson
-      ? safePatch(rec.patchJson)
+      ? parseStoredPatch(rec.patchJson)
       : null;
     const patchMatch = recommendationExplainsEdit(patch, after);
     const textMatch =

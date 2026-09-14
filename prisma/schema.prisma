@@ -90,6 +90,13 @@ model Monitor {
   currentState String    @default("Unknown") // MonitorState
   query        String?
   message      String? // routing/notify text (redacted)
+  /// Datadog `options` as JSON, when a live read supplied them.
+  ///
+  /// Needed as the before-state for an options patch: Datadog's monitor PUT
+  /// replaces the options object, so a change to one key has to be merged into
+  /// the full current set rather than sent alone, or every unspecified option
+  /// reverts to its default.
+  options      String?
   configHash   String?
   datadogUrl   String?
   envScope     String?

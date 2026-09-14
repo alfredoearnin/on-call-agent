@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { AppliedChangeStatus, RecommendationStatus } from "@/lib/constants";
 import type { ProposedPatch } from "@/lib/ingest/types";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
 import { appliedInSnapshotHistory } from "@/lib/monitor-config";
 
 export interface FeedbackResult {
@@ -38,7 +39,7 @@ export async function reconcileFeedback(): Promise<FeedbackResult> {
 
   for (const rec of recs) {
     const patch: ProposedPatch | null = rec.patchJson
-      ? (JSON.parse(rec.patchJson) as ProposedPatch)
+      ? parseStoredPatch(rec.patchJson)
       : null;
 
     let detectedApplied = rec.appliedChanges.some(

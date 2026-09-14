@@ -208,7 +208,7 @@ export function shapeFirings(
   timezone: string,
 ): Firing[] {
   return alerts
-    .map((a) => {
+    .map((a): Firing | undefined => {
       const at = a.created_at ? new Date(a.created_at) : undefined;
       if (!at || Number.isNaN(at.getTime())) return undefined;
       const resolved = a.resolved_at ? new Date(a.resolved_at) : undefined;
@@ -228,7 +228,7 @@ export function shapeFirings(
         minutesToResolve:
           minutes != null ? Math.round(minutes * 10) / 10 : undefined,
         hadIncident: false,
-      } satisfies Firing;
+      };
     })
     .filter((f): f is Firing => f !== undefined)
     .sort((a, b) => a.atIso.localeCompare(b.atIso));
@@ -239,7 +239,7 @@ export function shapePages(
   timezone: string,
 ): Page[] {
   return escalations
-    .map((e) => {
+    .map((e): Page | undefined => {
       const at = e.created_at ? new Date(e.created_at) : undefined;
       if (!at || Number.isNaN(at.getTime())) return undefined;
       const acked = e.acked_at ? new Date(e.acked_at) : undefined;
@@ -255,7 +255,7 @@ export function shapePages(
             : undefined,
         pagedCount: e.paged_users?.length ?? 0,
         escalationPath: e.escalation_path?.name,
-      } satisfies Page;
+      };
     })
     .filter((p): p is Page => p !== undefined)
     .sort((a, b) => a.atIso.localeCompare(b.atIso));

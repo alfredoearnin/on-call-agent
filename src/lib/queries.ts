@@ -519,3 +519,25 @@ export async function getAutomationTriggers(limit = 10) {
     take: limit,
   });
 }
+
+/**
+ * The most recent analysis of one monitor, for the Analyse button's status line.
+ *
+ * Newest regardless of status, because a failed or expired run is the thing an
+ * operator most needs to see — a list that showed only successes would imply
+ * nothing had been tried.
+ */
+export async function getLastMonitorAnalysis(monitorId: string) {
+  return prisma.monitorAnalysis.findFirst({
+    where: { monitorId },
+    orderBy: { requestedAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      requestedAt: true,
+      resultSummary: true,
+      error: true,
+      recommendationId: true,
+    },
+  });
+}
