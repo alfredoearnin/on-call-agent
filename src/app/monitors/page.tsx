@@ -1,6 +1,10 @@
 import Link from "next/link";
 import { getConfig, hasDatadogRead } from "@/lib/config";
-import { getMonitorList, getSyncSettings } from "@/lib/queries";
+import {
+  getMonitorList,
+  getSyncSettings,
+  type MonitorListRow,
+} from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
@@ -10,6 +14,35 @@ import { canTriggerAutomation } from "@/lib/automations/secrets";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * One row's recommendation tally, in three numbers that each mean one thing.
+ *
+ * The row used to read "4 recommendations (3 applyable)" for a monitor whose
+ * three changes were already in Datadog — "applyable" meant "the row has a
+ * patch column", and nothing on the index said that the work had been done.
+ * Whether the advice was taken is the question this list is for, so it is the
+ * clause that comes first.
+ *
+ * Clauses are omitted when their count is zero rather than printed as a zero,
+ * except "none applyable", which is the interesting case: advice is open and
+ * nothing can act on it.
+ */
+function recommendationSummary(m: MonitorListRow): string {
+  const parts = [
+    `${m.recommendationCount} recommendation${m.recommendationCount === 1 ? "" : "s"}`,
+  ];
+  if (m.appliedCount > 0) parts.push(`${m.appliedCount} applied`);
+  if (m.appliedOutOfBandCount > 0) {
+    parts.push(`${m.appliedOutOfBandCount} applied out of band`);
+  }
+  if (m.openCount > 0) {
+    parts.push(
+      m.applyableCount > 0 ? `${m.applyableCount} applyable` : "none applyable",
+    );
+  }
+  return parts.join(" · ");
+}
 
 /**
  * The monitor index.
@@ -48,6 +81,12 @@ export default async function MonitorsPage() {
   );
 
   const unexamined = monitors.filter((m) => m.lastAnalysisAt === null).length;
+  // The number this dashboard exists to move. It sat at zero for months with
+  // fifteen recommendations outstanding, and nothing on any page said so.
+  const applied = monitors.reduce(
+    (sum, m) => sum + m.appliedCount + m.appliedOutOfBandCount,
+    0,
+  );
 
   return (
     <div className="space-y-6">
@@ -56,6 +95,7 @@ export default async function MonitorsPage() {
         <p className="mt-1 text-sm text-muted-foreground">
           {monitors.length} monitor{monitors.length === 1 ? "" : "s"} ·{" "}
           {unexamined} never analysed
+          {applied > 0 ? ` · ${applied} recommendation(s) applied` : ""}
           {analyzeMode === "blocked"
             ? ` · analysis disabled (set ${missingAnalysisEnv.join(" and ")})`
             : ""}
@@ -101,12 +141,7 @@ export default async function MonitorsPage() {
                     {m.service ? ` · ${m.service}` : ""}
                     {` · ${m.alertCount} recorded firing${m.alertCount === 1 ? "" : "s"}`}
                     {m.recommendationCount > 0
-                      ? ` · ${m.recommendationCount} recommendation${m.recommendationCount === 1 ? "" : "s"}` +
-                        // An applyable count of zero is the interesting case:
-                        // advice exists but nothing can act on it.
-                        (m.applyableCount > 0
-                          ? ` (${m.applyableCount} applyable)`
-                          : " (none applyable)")
+                      ? ` · ${recommendationSummary(m)}`
                       : " · no recommendation yet"}
                     {m.lastAnalysisAt
                       ? ` · analysed ${fmtDateTime(m.lastAnalysisAt, tz)}${

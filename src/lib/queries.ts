@@ -11,6 +11,7 @@ import { dayKey } from "@/lib/format";
 import { AUTOMATIONS } from "@/lib/automations/meta";
 import {
   AlertDisposition,
+  AppliedChangeStatus,
   AutomationKey,
   FiringKind,
   IncidentClass,
@@ -18,6 +19,9 @@ import {
   RunStatus,
   TriggerStatus,
 } from "@/lib/constants";
+import { isSettledRecommendation } from "@/lib/constants";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
 import { readGitEvidence } from "@/lib/automations/git-evidence";
 import { readPageArchive } from "@/lib/automations/page-evidence";
 import {
@@ -557,7 +561,36 @@ export interface MonitorListRow {
   datadogUrl: string | null;
   alertCount: number;
   recommendationCount: number;
-  /** Recommendations carrying a patch the Apply button can act on. */
+  /**
+   * Recommendations applied through this dashboard, with an AppliedChange row
+   * behind them. The number the index was missing: a monitor with four
+   * recommendations reads very differently when three of them are done.
+   */
+  appliedCount: number;
+  /**
+   * Recommendations whose change was detected in the monitor's snapshot
+   * history instead — someone edited Datadog directly.
+   *
+   * Counted apart from `appliedCount` because the evidence is weaker and the
+   * difference is visible in practice: 135119948's recommendation was to swap
+   * `@webhook-incidentio-high` for `@webhook-incidentio-low`, and what actually
+   * happened was that the handles were split across `{{#is_alert}}` and
+   * `{{#is_warning}}` with low added to the warning branch. The recommendation
+   * was addressed, but not by the patch it carries, and a row claiming a plain
+   * "applied" would overstate what is known.
+   */
+  appliedOutOfBandCount: number;
+  /**
+   * Recommendations still awaiting a decision, and how many of those carry a
+   * patch that can be applied *right now*.
+   *
+   * `applyableCount` used to mean "has a patchJson", which is not the same
+   * question and read as a lie once a patch had been applied: monitor
+   * 243692163 showed "3 applyable" while all three patches were refused for
+   * describing a configuration the monitor no longer had. It is now the
+   * outcome of the same check the Apply button runs.
+   */
+  openCount: number;
   applyableCount: number;
   lastAnalysisAt: Date | null;
   lastAnalysisStatus: string | null;
@@ -581,7 +614,13 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
       orderBy: [{ priority: "asc" }, { name: "asc" }],
       include: {
         _count: { select: { alerts: true } },
-        recommendations: { select: { patchJson: true } },
+        recommendations: {
+          select: {
+            patchJson: true,
+            status: true,
+            appliedChanges: { select: { status: true } },
+          },
+        },
       },
     }),
     // One row per monitor: the newest analysis, whatever its outcome. Grouping
@@ -602,6 +641,14 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
   return monitors
     .map((m) => {
       const last = newest.get(m.id);
+      const open = m.recommendations.filter(
+        (r) => !isSettledRecommendation(r.status),
+      );
+      const inPlace = m.recommendations.filter(
+        (r) =>
+          r.status === RecommendationStatus.Applied ||
+          r.status === RecommendationStatus.Validated,
+      );
       return {
         id: m.id,
         name: m.name,
@@ -611,7 +658,23 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
         datadogUrl: m.datadogUrl,
         alertCount: m._count.alerts,
         recommendationCount: m.recommendations.length,
-        applyableCount: m.recommendations.filter((r) => r.patchJson).length,
+        appliedCount: inPlace.filter((r) =>
+          r.appliedChanges.some(
+            (c) => c.status === AppliedChangeStatus.Applied,
+          ),
+        ).length,
+        appliedOutOfBandCount: inPlace.filter(
+          (r) =>
+            !r.appliedChanges.some(
+              (c) => c.status === AppliedChangeStatus.Applied,
+            ),
+        ).length,
+        openCount: open.length,
+        // Judged against the monitor's live config, not merely the presence of
+        // a patch column.
+        applyableCount: open.filter(
+          (r) => patchState(parseStoredPatch(r.patchJson), m).kind === "appliable",
+        ).length,
         lastAnalysisAt: last?.requestedAt ?? null,
         lastAnalysisStatus: last?.status ?? null,
       };
