@@ -29,11 +29,35 @@ seconds (HTTP 499 via linkerd) while the backend kept working for another 60. No
 rule can find that. It is three real defects — retrying a 404, no timeout
 budget, ignoring client cancellation — and it needed a ticket, not a threshold.
 
-## Why you receive no parameters
+## What you are asked to look at
 
-A webhook trigger starts this automation with no usable body, so nothing tells
-you which monitor to look at. **Select your own candidates** from what the
-dashboard has already recorded.
+**If the trigger gave you a `monitorId`, investigate that monitor and no other.**
+The dashboard sends a payload shaped like this when someone clicks Analyse on a
+specific monitor:
+
+```json
+{
+  "intent": "investigate_monitor_cause",
+  "monitorId": "243692163",
+  "monitorName": "Service svc-notification-preferences has a high p90 latency on env:prod",
+  "service": "svc-notification-preferences",
+  "requestedBy": "on-call dashboard"
+}
+```
+
+That is a person pointing at one monitor and asking why. Honour it: skip the
+candidate selection below entirely, investigate that monitor, and say in the
+Slack message which monitor was requested.
+
+**Whether Cursor actually delivers that body to you is unverified.** Say so
+explicitly in your first run — state whether you received a `monitorId` or not.
+That one sentence settles a question the dashboard cannot answer from its side,
+and decides whether the section below is a fallback or the only path.
+
+## If no monitor was named
+
+Then nothing tells you where to look, and you **select your own candidates**
+from what the dashboard has already recorded.
 
 `prisma/oncall.db` is committed to this repo. Read it (read-only, never write to
 it) to find monitors the rules have already been through:
@@ -140,6 +164,7 @@ One message per run, threaded if you post more than a few lines:
 
 ```
 Monitor cause investigation — <N> monitor(s) reviewed
+Requested: <monitor id from the trigger, or "no monitor named — selected my own">
 
 <monitor id> <service>
   Verdict: <noise only | real defect | undetermined>
@@ -150,6 +175,11 @@ Monitor cause investigation — <N> monitor(s) reviewed
 
 Lead with the verdict. Somebody scanning that channel should learn in one line
 whether there is work to do.
+
+The `Requested:` line is not decoration. It is how anyone reading the channel
+knows whether the agent looked at the monitor they clicked or at something it
+chose for itself — and on the first run it is the answer to whether the webhook
+carries a payload at all.
 
 ## Hard constraints
 
@@ -190,9 +220,17 @@ whether there is work to do.
    `AutomationKey.HealthCheck`. The existing `RerunAutomationButton` and its
    five guards then work on it unchanged.
 
-**Two things to verify before relying on it.** First, whether a Cursor webhook
-can carry a body that the prompt can reference — if it can, this prompt takes a
-`monitorId` directly and the candidate-selection section becomes a fallback.
-Second, that a webhook trigger gives the agent repository access, since reading
-`prisma/oncall.db` depends on it; if it does not, replace the SQL selection with
-an incident.io query for the noisiest monitors of the last seven days.
+**Two things the first run must report.** Both are unverified, and both change
+what this prompt should say:
+
+1. **Did you receive a `monitorId`?** The dashboard sends one whenever someone
+   clicks Analyse on a monitor. If it arrives, the candidate-selection section
+   is dead weight and should be cut to a fallback. If it does not, per-monitor
+   triggering is impossible and the dashboard's button has to stop implying it.
+2. **Do you have repository access?** The candidate selection reads
+   `prisma/oncall.db` from this repo. If a webhook-triggered run cannot clone,
+   replace that SQL with an incident.io query for the noisiest monitors of the
+   last seven days — or, if incident.io is unconfigured, a Datadog
+   `source:alert` event search scoped to the team tag, chunked to five-day
+   windows because the events API rejects wider ranges and silently caps at
+   1000 events.

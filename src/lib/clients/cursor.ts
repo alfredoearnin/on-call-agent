@@ -46,19 +46,29 @@ export class CursorAutomationsClient {
    *
    * `ok: true` means Cursor ACCEPTED the request, not that the run succeeded.
    * Never throws; never leaks the endpoint or the key into the result.
+   *
+   * `payload` optionally tells the run what to work on. Whether Cursor delivers
+   * it to the automation's prompt is not something their docs settle, so it is
+   * sent and the prompt is written to work either way — using a `monitorId`
+   * when one arrives and selecting its own candidates when none does. Sending
+   * it costs nothing if it is discarded, and a run that silently investigated
+   * the wrong monitor would cost a lot.
    */
   async triggerAutomation(
     key: AutomationKey,
     label: string,
+    payload: Record<string, unknown> = {},
   ): Promise<TriggerOutcome> {
     const { webhookUrl, apiKey } = automationSecret(key);
     try {
       await httpRequest<unknown>(webhookUrl, {
         method: "POST",
         headers: triggerHeaders(this.cfg, apiKey),
-        // Cursor's docs do not specify a body for webhook triggers. `{}` is the
-        // minimal valid JSON payload and makes httpRequest set Content-Type.
-        body: {},
+        // Cursor's docs do not specify a body for webhook triggers, so this
+        // may be discarded on their side. `{}` remains the default and is the
+        // minimal valid JSON payload, which also makes httpRequest set
+        // Content-Type.
+        body: payload,
         timeoutMs: 10_000,
         // retries: 0 — a webhook POST is NOT idempotent and Cursor offers no
         // idempotency key. httpRequest otherwise retries 429, 5xx AND network or

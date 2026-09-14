@@ -35,12 +35,13 @@ export interface TriggerResult {
  */
 export async function triggerAutomationAction(
   rawKey: string,
+  payload: Record<string, unknown> = {},
 ): Promise<TriggerResult> {
   // The docstring promises this never throws, so make that true rather than nearly
   // true. Every DB read below can fail — and a thrown server action shows the
   // operator a raw 500 with no indication of whether the agent started.
   try {
-    return await sendTrigger(rawKey);
+    return await sendTrigger(rawKey, payload);
   } catch {
     return {
       ok: false,
@@ -50,7 +51,10 @@ export async function triggerAutomationAction(
   }
 }
 
-async function sendTrigger(rawKey: string): Promise<TriggerResult> {
+async function sendTrigger(
+  rawKey: string,
+  payload: Record<string, unknown> = {},
+): Promise<TriggerResult> {
   // A server action is a public endpoint, so the argument is untrusted — same
   // reason applyRecommendationAction takes `scope: string` and normalizes it.
   if (!isAutomationKey(rawKey)) {
@@ -129,6 +133,7 @@ async function sendTrigger(rawKey: string): Promise<TriggerResult> {
   const outcome = await new CursorAutomationsClient(cfg).triggerAutomation(
     key,
     meta.label,
+    payload,
   );
 
   // The POST has already happened, so an audit failure must not destroy the result:

@@ -25,6 +25,9 @@ import {
   recommendFromEvidence,
   type RuleRecommendation,
 } from "@/lib/analysis/recommend";
+import { triggerAutomationAction } from "@/lib/automation-actions";
+import { AutomationKey } from "@/lib/constants";
+import { canTriggerAutomation } from "@/lib/automations/secrets";
 
 /**
  * Running one on-demand monitor analysis.
@@ -51,6 +54,34 @@ export interface AnalysisActionResult {
   analysisId?: string;
   recommendationIds?: string[];
   message?: string;
+  /** Whether the cause-investigation agent was asked to look at this monitor. */
+  investigationRequested?: boolean;
+}
+
+/**
+ * Hand this monitor to the cause-investigation agent, if it is configured.
+ *
+ * The rules and the agent answer different questions about the same monitor —
+ * what to change, and why the service misbehaved — so one click asks both. The
+ * agent half is best-effort: it runs in Cursor, takes minutes, and its output
+ * lands in Jira and Slack rather than here, so a failure to reach it must not
+ * fail the analysis that already succeeded.
+ */
+async function requestCauseInvestigation(
+  monitorId: string,
+  monitorName: string,
+  service: string | undefined,
+): Promise<boolean> {
+  if (!canTriggerAutomation(AutomationKey.CauseInvestigation)) return false;
+  const res = await triggerAutomationAction(AutomationKey.CauseInvestigation, {
+    monitorId,
+    monitorName,
+    service: service ?? null,
+    requestedBy: "on-call dashboard",
+    // Named so the prompt can key off it rather than guessing at the shape.
+    intent: "investigate_monitor_cause",
+  });
+  return res.ok;
 }
 
 /**
@@ -233,6 +264,14 @@ async function runAnalysis(monitorId: string): Promise<AnalysisActionResult> {
       );
     }
 
+    // Fired after the rules have run and been stored, so the local result is
+    // never lost to a webhook failure.
+    const investigationRequested = await requestCauseInvestigation(
+      monitorId,
+      monitor.name,
+      evidence.monitor.service,
+    );
+
     const summary =
       recs.length === 0
         ? "No mechanical defect found."
@@ -253,14 +292,19 @@ async function runAnalysis(monitorId: string): Promise<AnalysisActionResult> {
     revalidatePath("/recommendations");
     revalidatePath("/", "layout");
 
+    const agentNote = investigationRequested
+      ? " Cause investigation requested in Cursor — findings arrive as Jira tickets."
+      : "";
+
     return {
       ok: true,
       analysisId: analysis.id,
       recommendationIds: ids,
+      investigationRequested,
       message:
-        recs.length === 0
+        (recs.length === 0
           ? "Analysed: no mechanical defect found in this monitor's configuration."
-          : `Analysed: ${recs.length} recommendation(s) — see below.`,
+          : `Analysed: ${recs.length} recommendation(s) — see below.`) + agentNote,
     };
   } catch (err) {
     await prisma.monitorAnalysis.update({

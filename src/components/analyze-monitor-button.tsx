@@ -59,11 +59,20 @@ export function AnalyzeMonitorButton({
   mode,
   missingEnv,
   last,
+  alsoInvestigates = false,
 }: {
   monitorId: string;
   mode: AnalyzeMode;
   missingEnv: string[];
   last: LastAnalysis | null;
+  /**
+   * True when the Cursor cause-investigation automation is configured, so this
+   * click also hands the monitor to the agent. Stated in the tooltip rather
+   * than assumed: the two halves are gated by different credentials, and a
+   * button that silently did less than its label claimed is how the last
+   * confusion started.
+   */
+  alsoInvestigates?: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [msg, setMsg] = useState<string | null>(null);
@@ -94,7 +103,9 @@ export function AnalyzeMonitorButton({
         title={
           mode === "blocked"
             ? `Set ${missingEnv.join(" and ")} in .env.local to enable analysis`
-            : "Gather this monitor's evidence and propose a change"
+            : alsoInvestigates
+              ? "Gather this monitor's evidence and propose a change, and ask the Cursor agent why the service misbehaved"
+              : "Gather this monitor's evidence and propose a change"
         }
       >
         <Sparkles className={cn("h-4 w-4", isPending && "animate-pulse")} />

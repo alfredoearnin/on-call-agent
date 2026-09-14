@@ -5,12 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
-import { RerunAutomationButton } from "@/components/rerun-automation-button";
 import { AutomationKey } from "@/lib/constants";
-import {
-  automationEnvNames,
-  canTriggerAutomation,
-} from "@/lib/automations/secrets";
+import { canTriggerAutomation } from "@/lib/automations/secrets";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -43,49 +39,30 @@ export default async function MonitorsPage() {
   const analyzeMode: "real" | "blocked" =
     missingAnalysisEnv.length === 0 ? "real" : "blocked";
 
-  // Gated on its own credentials, independently of the rule-based analysis:
-  // one needs Datadog, the other needs the Cursor webhook, and either can be
-  // available without the other.
-  const investigateMode: "real" | "blocked" = canTriggerAutomation(
+  // One button, two halves, gated separately: the rules need the Datadog read
+  // keys and the cause investigation needs the Cursor webhook pair. Either can
+  // be configured without the other, so the caption says which is in play
+  // rather than implying both always run.
+  const investigateConfigured = canTriggerAutomation(
     AutomationKey.CauseInvestigation,
-  )
-    ? "real"
-    : "blocked";
+  );
 
   const unexamined = monitors.filter((m) => m.lastAnalysisAt === null).length;
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Monitors</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {monitors.length} monitor{monitors.length === 1 ? "" : "s"} ·{" "}
-            {unexamined} never analysed
-            {analyzeMode === "blocked"
-              ? ` · analysis disabled (set ${missingAnalysisEnv.join(" and ")})`
-              : ""}
-          </p>
-        </div>
-        {/* Two different things, so two buttons, and the difference is stated
-            rather than implied. The per-row Analyse runs here and now; this one
-            hands work to a cloud agent that picks its own candidates, because a
-            Cursor webhook trigger carries no monitor id. Putting it only in
-            Settings hid it where nobody would look for it. */}
-        <div className="flex flex-col items-end gap-1">
-          <RerunAutomationButton
-            automationKey={AutomationKey.CauseInvestigation}
-            mode={investigateMode}
-            missingEnv={automationEnvNames(AutomationKey.CauseInvestigation)}
-            warning={null}
-            label="Investigate causes"
-            pendingLabel="Requesting…"
-            idleTitle="Ask the Cursor agent to work out why services behind these monitors misbehave. It selects its own candidates and files Jira tickets."
-          />
-          <span className="max-w-xs text-right text-xs text-muted-foreground">
-            Runs in Cursor, not here. Files Jira tickets and posts to Slack.
-          </span>
-        </div>
+      <header>
+        <h1 className="text-xl font-semibold">Monitors</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {monitors.length} monitor{monitors.length === 1 ? "" : "s"} ·{" "}
+          {unexamined} never analysed
+          {analyzeMode === "blocked"
+            ? ` · analysis disabled (set ${missingAnalysisEnv.join(" and ")})`
+            : ""}
+          {investigateConfigured
+            ? " · Analyse also asks the Cursor agent for the cause"
+            : ""}
+        </p>
       </header>
 
       {monitors.length === 0 ? (
@@ -146,6 +123,7 @@ export default async function MonitorsPage() {
                   mode={analyzeMode}
                   missingEnv={missingAnalysisEnv}
                   last={null}
+                  alsoInvestigates={investigateConfigured}
                 />
               </div>
             ))}
