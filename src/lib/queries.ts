@@ -541,3 +541,79 @@ export async function getLastMonitorAnalysis(monitorId: string) {
     },
   });
 }
+
+export interface MonitorListRow {
+  id: string;
+  name: string;
+  service: string | null;
+  priority: string;
+  currentState: string;
+  datadogUrl: string | null;
+  alertCount: number;
+  recommendationCount: number;
+  /** Recommendations carrying a patch the Apply button can act on. */
+  applyableCount: number;
+  lastAnalysisAt: Date | null;
+  lastAnalysisStatus: string | null;
+}
+
+/**
+ * Every monitor, for the index that makes them reachable.
+ *
+ * Until this existed a monitor page could only be opened from a link on a
+ * recommendation, an alert or a config edit — so a monitor that had never been
+ * analysed, and therefore had none of those, had no route to it at all. That is
+ * exactly backwards: the monitors worth analysing first were the only ones you
+ * could not get to.
+ *
+ * Ordered by how much attention a monitor is asking for: firings first, then
+ * the ones with no recommendation yet, since those are the unexamined ones.
+ */
+export async function getMonitorList(): Promise<MonitorListRow[]> {
+  const [monitors, analyses] = await Promise.all([
+    prisma.monitor.findMany({
+      orderBy: [{ priority: "asc" }, { name: "asc" }],
+      include: {
+        _count: { select: { alerts: true } },
+        recommendations: { select: { patchJson: true } },
+      },
+    }),
+    // One row per monitor: the newest analysis, whatever its outcome. Grouping
+    // in SQL would lose the status, so the newest-wins pass happens here.
+    prisma.monitorAnalysis.findMany({
+      orderBy: { requestedAt: "desc" },
+      select: { monitorId: true, requestedAt: true, status: true },
+    }),
+  ]);
+
+  const newest = new Map<string, { requestedAt: Date; status: string }>();
+  for (const a of analyses) {
+    if (!newest.has(a.monitorId)) {
+      newest.set(a.monitorId, { requestedAt: a.requestedAt, status: a.status });
+    }
+  }
+
+  return monitors
+    .map((m) => {
+      const last = newest.get(m.id);
+      return {
+        id: m.id,
+        name: m.name,
+        service: m.service,
+        priority: m.priority,
+        currentState: m.currentState,
+        datadogUrl: m.datadogUrl,
+        alertCount: m._count.alerts,
+        recommendationCount: m.recommendations.length,
+        applyableCount: m.recommendations.filter((r) => r.patchJson).length,
+        lastAnalysisAt: last?.requestedAt ?? null,
+        lastAnalysisStatus: last?.status ?? null,
+      };
+    })
+    .sort(
+      (a, b) =>
+        b.alertCount - a.alertCount ||
+        a.recommendationCount - b.recommendationCount ||
+        a.name.localeCompare(b.name),
+    );
+}
