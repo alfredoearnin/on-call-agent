@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ApplyControl } from "@/components/apply-control";
 import { statusTone, statusLabel, confidenceLabel } from "@/lib/format";
+import { isSettledRecommendation } from "@/lib/constants";
 
 type Mode = "real" | "demo" | "blocked";
 
@@ -94,11 +95,23 @@ export function RecommendationCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
-        <ApplyControl
-          recommendationId={rec.id}
-          hasPatch={Boolean(rec.patchJson)}
-          mode={applyMode}
-        />
+        {/* No Apply on a change that is already in place. The drift guard would
+            turn a second press into a no-op rather than a double write, so this
+            is not a safety fix — it is that offering the button invites a click
+            that can only report nothing happened. `regressed` keeps its button:
+            that status exists precisely because the change needs applying
+            again, and a revert returns the row to `recommend`. */}
+        {isSettledRecommendation(rec.status) ? (
+          <span className="text-xs text-muted-foreground">
+            {statusLabel(rec.status)} — no further action.
+          </span>
+        ) : (
+          <ApplyControl
+            recommendationId={rec.id}
+            hasPatch={Boolean(rec.patchJson)}
+            mode={applyMode}
+          />
+        )}
         {rec.monitor?.datadogUrl && (
           <a
             href={rec.monitor.datadogUrl}

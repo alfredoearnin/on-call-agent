@@ -56,6 +56,26 @@ export const RecommendationStatus = {
 export type RecommendationStatus =
   (typeof RecommendationStatus)[keyof typeof RecommendationStatus];
 
+/**
+ * True when a recommendation needs no further decision.
+ *
+ * `regressed` is deliberately not settled: that status exists because an
+ * applied change stopped working and needs applying again. A revert returns
+ * the row to `recommend` for the same reason.
+ *
+ * Lives here rather than in queries.ts because it is a pure status predicate
+ * and queries.ts is `server-only` — a presentational component that needs this
+ * would otherwise drag Prisma into its module graph to ask a question about a
+ * string.
+ */
+export function isSettledRecommendation(status: string): boolean {
+  return (
+    status === RecommendationStatus.Applied ||
+    status === RecommendationStatus.Validated ||
+    status === RecommendationStatus.Resolved
+  );
+}
+
 /** Confidence of a recommendation. */
 export const Confidence = {
   High: "high",

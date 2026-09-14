@@ -6,7 +6,9 @@ import {
   getMonitorCauseFindings,
   getMonitorDetail,
   getSyncSettings,
+  isSettledRecommendation,
 } from "@/lib/queries";
+import { ChevronRight } from "lucide-react";
 import { verdictLabel } from "@/lib/analysis/cause-report";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
@@ -47,6 +49,17 @@ export default async function MonitorPage({
     : cfg.demoMode
       ? "demo"
       : "blocked";
+
+  // Settled recommendations move to a collapsed list at the bottom, the same
+  // split the Recommendations page already makes. Interleaved, an applied change
+  // reads as outstanding work, and the list of things still to decide gets
+  // longer every time one of them is decided.
+  const activeRecommendations = monitor.recommendations.filter(
+    (r) => !isSettledRecommendation(r.status),
+  );
+  const settledRecommendations = monitor.recommendations.filter((r) =>
+    isSettledRecommendation(r.status),
+  );
 
   // The analysis is rule-based, so the Datadog read credentials are the whole
   // requirement — there is no model to configure and no third-party runner.
@@ -231,10 +244,10 @@ export default async function MonitorPage({
         </Card>
       )}
 
-      {monitor.recommendations.length > 0 && (
+      {activeRecommendations.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold">Recommendations</h2>
-          {monitor.recommendations.map((rec) => (
+          {activeRecommendations.map((rec) => (
             <RecommendationCard
               key={rec.id}
               rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
@@ -303,6 +316,24 @@ export default async function MonitorPage({
           </CardContent>
         </Card>
       </div>
+
+      {settledRecommendations.length > 0 && (
+        <details className="group">
+          <summary className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-foreground/80 hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            Already applied ({settledRecommendations.length})
+          </summary>
+          <div className="mt-4 space-y-4">
+            {settledRecommendations.map((rec) => (
+              <RecommendationCard
+                key={rec.id}
+                rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
+                applyMode={applyMode}
+              />
+            ))}
+          </div>
+        </details>
+      )}
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Config edits</h2>

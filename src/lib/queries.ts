@@ -278,13 +278,9 @@ const STATUS_ORDER: Record<string, number> = {
  * nothing of the operator. `regressed` is excluded on purpose: that change did
  * land, but the noise came back, which is a fresh call to action.
  */
-export function isSettledRecommendation(status: string): boolean {
-  return (
-    status === RecommendationStatus.Applied ||
-    status === RecommendationStatus.Validated ||
-    status === RecommendationStatus.Resolved
-  );
-}
+// Re-exported for the callers that already import it from here; the predicate
+// itself now lives in constants.ts, outside `server-only`.
+export { isSettledRecommendation } from "@/lib/constants";
 
 export async function getRecommendations() {
   const recs = await prisma.tuningRecommendation.findMany({
