@@ -411,6 +411,17 @@ model MonitorAnalysis {
   /// When a terminal state was actually observed. Null while in flight.
   observedAt  DateTime?
 
+  /// When the cause-investigation agent was asked about this monitor, if it was.
+  ///
+  /// Recorded here rather than read from AutomationTrigger because that table
+  /// has no monitor id — it records that an automation was fired, not what it
+  /// was fired about. Without this the dashboard can say "an investigation was
+  /// requested" but never "of this monitor".
+  ///
+  /// Means "we asked", never "it worked": the agent's findings land in Jira and
+  /// Slack, and its run is observable only in Cursor.
+  investigationRequestedAt DateTime?
+
   @@index([monitorId, requestedAt])
   @@index([status])
 }

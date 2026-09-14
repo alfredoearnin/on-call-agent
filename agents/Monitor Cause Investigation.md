@@ -147,9 +147,16 @@ bypass that audit trail entirely.
 
 ### A Jira ticket per real defect
 
-Project and issue type as configured in `JIRA_HANDOFF_PROJECT_ID`. One ticket
-per defect, not one per monitor — the September case is three tickets.
+**Project: `<FILL IN — the Growth engineering project key, e.g. GROWTH>`.** Ask
+before filing if that is still a placeholder; do not guess a project.
 
+One ticket per defect, not one per monitor — the September case is three
+tickets.
+
+- **Label every ticket `monitor-<id>`**, e.g. `monitor-243692163`. This is not
+  cosmetic: it is the only way the dashboard can find your findings later and
+  show them beside the monitor they came from. A ticket without it is invisible
+  to the loop that asked for it.
 - **Title**: the defect, not the symptom. "Retry policy retries 404s from
   service-card-processor" beats "svc-notification-preferences latency".
 - **Body**: the trace id and a Datadog link; the causal chain in three or four

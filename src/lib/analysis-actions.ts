@@ -372,6 +372,7 @@ async function runAnalysis(monitorId: string): Promise<AnalysisActionResult> {
         evidenceJson: JSON.stringify(evidence),
         resultSummary: summary,
         recommendationId: ids[0] ?? null,
+        investigationRequestedAt: investigationRequested ? new Date() : null,
       },
     });
 

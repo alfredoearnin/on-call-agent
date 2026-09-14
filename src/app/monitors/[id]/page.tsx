@@ -8,6 +8,7 @@ import {
 } from "@/lib/queries";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
+import { AutomationKey } from "@/lib/constants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCard } from "@/components/alert-card";
@@ -104,6 +105,42 @@ export default async function MonitorPage({
           </a>
         )}
       </header>
+
+      {lastAnalysis?.investigationRequestedAt && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Cause investigation</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            <p>
+              Requested{" "}
+              {fmtDateTime(lastAnalysis.investigationRequestedAt, tz)} — the
+              agent runs in Cursor, so its findings arrive as Jira tickets
+              labelled{" "}
+              <code className="rounded bg-background px-1 text-xs">
+                monitor-{monitor.id}
+              </code>{" "}
+              and a message in the alerts channel.
+            </p>
+            {/* "Requested" is the whole claim. Cursor exposes no run-status API
+                to the dashboard, so this cannot say whether the run succeeded,
+                found anything, or is still going — the link is how you find
+                out, and pretending otherwise is what the automation health
+                checks already refuse to do. */}
+            <p className="text-xs text-muted-foreground">
+              This records that it was asked, not what it found.{" "}
+              <a
+                href={`${cfg.automations.consoleUrl[AutomationKey.CauseInvestigation]}/runs`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Open the run in Cursor ↗
+              </a>
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {monitor.query && (
         <Card>

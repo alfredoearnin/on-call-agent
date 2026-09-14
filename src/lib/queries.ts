@@ -542,6 +542,7 @@ export async function getLastMonitorAnalysis(monitorId: string) {
       resultSummary: true,
       error: true,
       recommendationId: true,
+      investigationRequestedAt: true,
     },
   });
 }
