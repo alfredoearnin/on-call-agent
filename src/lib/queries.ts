@@ -22,6 +22,11 @@ import {
 import { isSettledRecommendation } from "@/lib/constants";
 import { parseStoredPatch } from "@/lib/ingest/patch-schema";
 import { patchState } from "@/lib/ingest/patch-state";
+import {
+  DEFAULT_MONITOR_SORT,
+  sortMonitors,
+  type MonitorSort,
+} from "@/lib/monitor-sort";
 import { readGitEvidence } from "@/lib/automations/git-evidence";
 import { readPageArchive } from "@/lib/automations/page-evidence";
 import {
@@ -608,7 +613,9 @@ export interface MonitorListRow {
  * Ordered by how much attention a monitor is asking for: firings first, then
  * the ones with no recommendation yet, since those are the unexamined ones.
  */
-export async function getMonitorList(): Promise<MonitorListRow[]> {
+export async function getMonitorList(
+  sort: MonitorSort = DEFAULT_MONITOR_SORT,
+): Promise<MonitorListRow[]> {
   const [monitors, analyses] = await Promise.all([
     prisma.monitor.findMany({
       orderBy: [{ priority: "asc" }, { name: "asc" }],
@@ -638,7 +645,7 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
     }
   }
 
-  return monitors
+  const rows = monitors
     .map((m) => {
       const last = newest.get(m.id);
       const open = m.recommendations.filter(
@@ -678,13 +685,9 @@ export async function getMonitorList(): Promise<MonitorListRow[]> {
         lastAnalysisAt: last?.requestedAt ?? null,
         lastAnalysisStatus: last?.status ?? null,
       };
-    })
-    .sort(
-      (a, b) =>
-        b.alertCount - a.alertCount ||
-        a.recommendationCount - b.recommendationCount ||
-        a.name.localeCompare(b.name),
-    );
+    });
+
+  return sortMonitors(rows, sort);
 }
 
 export interface MonitorCauseFindings {

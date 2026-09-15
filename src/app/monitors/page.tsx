@@ -8,6 +8,12 @@ import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
 import { AutomationKey } from "@/lib/constants";
 import { canTriggerAutomation } from "@/lib/automations/secrets";
 import { monitorProgressBadges } from "@/lib/monitor-progress";
+import {
+  MONITOR_SORT_LABELS,
+  parseMonitorSort,
+  DEFAULT_MONITOR_SORT,
+} from "@/lib/monitor-sort";
+import { cn } from "@/lib/utils";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -21,15 +27,23 @@ export const dynamic = "force-dynamic";
  * only be opened by typing its id into the URL. The monitors most worth a first
  * look were the only unreachable ones.
  *
- * Ordered by firings, then by monitors with no recommendation yet, so the
- * unexamined ones surface rather than sinking below the ones already handled.
+ * Ordered by firings by default, then by monitors with no recommendation yet,
+ * so the unexamined ones surface rather than sinking below the ones already
+ * handled. The other orderings, and why each one is offered, are in
+ * monitor-sort.ts.
  */
-export default async function MonitorsPage() {
+export default async function MonitorsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string }>;
+}) {
+  const { sort: sortParam } = await searchParams;
+  const sort = parseMonitorSort(sortParam);
   const cfg = getConfig();
   // Settle any run the platform killed mid-request before rendering a status.
   await reconcileStaleAnalyses();
   const [monitors, settings] = await Promise.all([
-    getMonitorList(),
+    getMonitorList(sort),
     getSyncSettings(),
   ]);
   const tz = settings?.timezone ?? cfg.team.timezone;
@@ -72,6 +86,35 @@ export default async function MonitorsPage() {
             : ""}
         </p>
       </header>
+
+      {monitors.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Sort</span>
+          {/* Links rather than a client control: the choice belongs in the URL
+              so it survives a refresh and can be shared, and this page is a
+              server component that re-queries anyway. Same segmented shape as
+              the Daily page's view tabs. */}
+          <div className="inline-flex flex-wrap rounded-md border border-input p-0.5">
+            {MONITOR_SORT_LABELS.map((o) => (
+              <Link
+                key={o.sort}
+                // The default carries no param, so the plain /monitors URL is
+                // the default order rather than a second spelling of it.
+                href={o.sort === DEFAULT_MONITOR_SORT ? "/monitors" : `/monitors?sort=${o.sort}`}
+                title={o.title}
+                className={cn(
+                  "rounded px-2.5 py-1",
+                  sort === o.sort
+                    ? "bg-muted font-medium text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {o.label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {monitors.length === 0 ? (
         <Card>
