@@ -21,6 +21,23 @@ export interface AutomationMeta {
   produces: string;
   /** The repo file holding this automation's prompt. */
   promptFile: string;
+  /**
+   * Where this automation is started from.
+   *
+   * `settings` for the daily chain, whose runs take no subject: re-running the
+   * health check means "do the week again", and there is nothing to aim it at.
+   *
+   * `monitor` for the cause investigation, which is started by Analyse on one
+   * monitor and carries that monitor's id. A Settings button fires the same
+   * webhook with no payload, which does not fail — the prompt falls back to
+   * choosing a candidate itself, and the dashboard flags the result "agent
+   * selected this monitor itself". So the button was a way to start a cloud
+   * agent on a subject nobody picked, sitting next to buttons that re-run
+   * deterministic steps. The row stays for what Settings is for: whether the
+   * credentials are configured, when the agent was last asked anything, and a
+   * link to the runs.
+   */
+  triggerFrom: "settings" | "monitor";
 }
 
 export const AUTOMATIONS: readonly AutomationMeta[] = [
@@ -30,6 +47,7 @@ export const AUTOMATIONS: readonly AutomationMeta[] = [
     label: "Growth Engineering Health Check",
     produces: "the Confluence handoff page",
     promptFile: "the agent prompt in agents/",
+    triggerFrom: "settings",
   },
   {
     key: AutomationKey.DashboardRefresh,
@@ -37,6 +55,7 @@ export const AUTOMATIONS: readonly AutomationMeta[] = [
     label: "On-call dashboard — daily refresh",
     produces: "a Daily refresh commit on main",
     promptFile: "agents/OnCall dashboard.md",
+    triggerFrom: "settings",
   },
   {
     key: AutomationKey.CauseInvestigation,
@@ -45,8 +64,13 @@ export const AUTOMATIONS: readonly AutomationMeta[] = [
     // and the settle-window warning between them do not apply to it.
     step: 0,
     label: "Monitor cause investigation",
-    produces: "Jira tickets and a Slack message",
+    // The Confluence page comes first because it is the one output the dashboard
+    // reads back: the monitor page finds it by title and renders the verdict.
+    // Naming only the tickets and the Slack message hid the fact that there is
+    // a channel from the agent into this dashboard at all.
+    produces: "a Confluence findings page, Jira tickets and a Slack message",
     promptFile: "agents/Monitor Cause Investigation.md",
+    triggerFrom: "monitor",
   },
 ] as const;
 

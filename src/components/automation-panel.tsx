@@ -5,6 +5,7 @@ import {
   RerunAutomationButton,
   type TriggerMode,
 } from "@/components/rerun-automation-button";
+import Link from "next/link";
 import { timeAgo } from "@/lib/format";
 import {
   healthTone,
@@ -31,6 +32,8 @@ export interface AutomationRow {
   /** Env var NAMES (not values) to show when the webhook is unconfigured. */
   missingEnv: string[];
   health?: AutomationHealth;
+  /** Where this automation is started from. See AutomationMeta.triggerFrom. */
+  triggerFrom: "settings" | "monitor";
   lastTriggeredAt: Date | null;
   /** Set on #2 when #1 was fired recently. Never disables the button. */
   warning: string | null;
@@ -60,6 +63,12 @@ export function AutomationPanel({
           wait for its page, then step 2. Nothing here is chained or timed.
         </p>
         <p className="text-xs text-muted-foreground">
+          The <strong>on demand</strong> one is not part of that: it investigates a
+          single monitor, is started by <strong>Analyse</strong> on that monitor,
+          and writes its findings to Confluence and Jira rather than into this
+          checkout. It is listed here for its credentials and its run history.
+        </p>
+        <p className="text-xs text-muted-foreground">
           Cursor returns no run id and no run status, so these buttons can only
           confirm that the request was <em>accepted</em> — never that the run
           succeeded. Health below is inferred from what this checkout can actually
@@ -76,7 +85,12 @@ export function AutomationPanel({
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 space-y-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <Badge tone="neutral">step {row.step}</Badge>
+                  {/* `step 0` is the sentinel for "not in the daily chain",
+                      and rendering it literally read as first in the sequence —
+                      the opposite of what it means. */}
+                  <Badge tone="neutral" className="normal-case">
+                    {row.step > 0 ? `step ${row.step}` : "on demand"}
+                  </Badge>
                   <span className="text-sm font-medium">{row.label}</span>
                   {row.health && (
                     <Badge tone={healthTone(row.health.state)}>
@@ -114,12 +128,29 @@ export function AutomationPanel({
                     {row.warning}
                   </span>
                 )}
-                <RerunAutomationButton
-                  automationKey={row.key}
-                  mode={row.mode}
-                  missingEnv={row.missingEnv}
-                  warning={row.warning}
-                />
+                {row.triggerFrom === "settings" ? (
+                  <RerunAutomationButton
+                    automationKey={row.key}
+                    mode={row.mode}
+                    missingEnv={row.missingEnv}
+                    warning={row.warning}
+                  />
+                ) : (
+                  /* No button, because the trigger here could not aim: it fires
+                     the webhook with no monitor id, and the prompt then chooses
+                     a candidate itself. The row is still worth its place — it is
+                     where you see whether the credentials are set and when the
+                     agent was last asked anything — so it says where the trigger
+                     lives instead of offering a worse one. */
+                  <span className="max-w-xs text-right text-xs text-muted-foreground">
+                    Started per monitor, by{" "}
+                    <Link href="/monitors" className="text-primary hover:underline">
+                      Analyse
+                    </Link>
+                    {row.mode === "blocked" &&
+                      ` — unconfigured, set ${row.missingEnv.join(" and ")}`}
+                  </span>
+                )}
               </div>
             </div>
           </div>
