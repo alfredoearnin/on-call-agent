@@ -9,7 +9,66 @@ import {
   RecommendationStatus,
   TargetScope,
 } from "@/lib/constants";
-import type { ProposedPatch, PatchBranch } from "@/lib/ingest/types";
+import type {
+  PatchBranch,
+  PatchOption,
+  ProposedPatch,
+} from "@/lib/ingest/types";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
+
+/** Which Monitor column a patch target writes to locally. */
+type PatchField = "message" | "query" | "priority" | "options";
+
+/**
+ * Reflect an applied (or reverted) value on the local Monitor row.
+ *
+ * One mapping for both directions, so a new target cannot be handled on the
+ * apply path and silently dropped on the revert path — which would leave the
+ * dashboard showing a config Datadog no longer has.
+ */
+function monitorFieldUpdate(
+  field: string,
+  value: string,
+): Record<string, string> {
+  switch (field) {
+    case "query":
+      return { query: value };
+    case "message":
+      return { message: value };
+    case "options":
+      return { options: value };
+    default:
+      return { priority: value };
+  }
+}
+
+/**
+ * The Datadog PUT body that restores a saved before-state.
+ *
+ * `options` is stored as JSON text, so it has to be parsed back into an object;
+ * sending the string would be rejected. A malformed stored value throws here
+ * rather than sending a body that would reset the monitor's options to their
+ * defaults — a failed revert is recoverable, a silently emptied options object
+ * is not.
+ */
+function revertPutBody(field: string, value: string): Record<string, unknown> {
+  switch (field) {
+    case "query":
+      return { query: value };
+    case "message":
+      return { message: value };
+    case "options": {
+      const parsed = JSON.parse(value) as unknown;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("stored options are not an object");
+      }
+      return { options: parsed };
+    }
+    default:
+      return { priority: Number(value) };
+  }
+}
 
 export interface ApplyResult {
   ok: boolean;
@@ -25,6 +84,46 @@ function branchFor(patch: ProposedPatch, scope: string): PatchBranch | undefined
 
 function applyTransform(current: string, branch: PatchBranch): string {
   return current.split(branch.find).join(branch.replace);
+}
+
+/** Stable, readable JSON so the preview diff is comparable line by line. */
+function stableOptionsJson(options: Record<string, unknown>): string {
+  const sorted = Object.keys(options)
+    .sort()
+    .reduce<Record<string, unknown>>((acc, k) => {
+      acc[k] = options[k];
+      return acc;
+    }, {});
+  return JSON.stringify(sorted, null, 2);
+}
+
+function parseOptions(raw: string | null | undefined): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Merge an options patch into the monitor's current options.
+ *
+ * Datadog's monitor PUT replaces the whole options object, so sending only the
+ * changed key would silently reset every other option to its default —
+ * including the thresholds. The merge is the safe form, and it is why
+ * Monitor.options has to be populated before an options patch can be applied.
+ */
+function mergeOptions(
+  current: Record<string, unknown>,
+  sets: PatchOption[],
+): Record<string, unknown> {
+  const next = { ...current };
+  for (const { key, value } of sets) next[key] = value;
+  return next;
 }
 
 /**
@@ -49,9 +148,19 @@ export async function previewApplyAction(
   if (!rec?.patchJson || !rec.monitor) {
     return { ok: false, message: "No applyable change for this recommendation." };
   }
-  const patch = JSON.parse(rec.patchJson) as ProposedPatch;
+  const patch = parseStoredPatch(rec.patchJson);
+  if (!patch) {
+    return { ok: false, message: "The stored change is malformed and was not applied." };
+  }
+  // Checked here and not only in the apply action: the preview is what the
+  // operator reads before deciding, so a patch that must not be applied has to
+  // say so instead of rendering a plausible diff behind a live button.
+  const state = patchState(patch, rec.monitor);
+  if (state.kind === "already_applied" || state.kind === "stale") {
+    return { ok: false, message: state.message };
+  }
   const branch = branchFor(patch, scope);
-  if (!branch && patch.target !== "priority") {
+  if (!branch && patch.target !== "priority" && patch.target !== "options") {
     return { ok: false, message: "No change defined for this scope." };
   }
 
@@ -59,6 +168,26 @@ export async function previewApplyAction(
     const before = rec.monitor.priority;
     const after = String(patch.priorityValue ?? "");
     return { ok: true, field: "priority", before, after, changed: before !== after };
+  }
+
+  if (patch.target === "options") {
+    const sets = patch.options ?? [];
+    if (sets.length === 0) {
+      return { ok: false, message: "No options defined for this change." };
+    }
+    // Without a live read of the current options there is no before-state to
+    // merge into, and a PUT would reset every option Datadog is not told about.
+    if (!rec.monitor.options) {
+      return {
+        ok: false,
+        message:
+          "Monitor options are not stored yet — run an analysis to read them from Datadog first.",
+      };
+    }
+    const current = parseOptions(rec.monitor.options);
+    const before = stableOptionsJson(current);
+    const after = stableOptionsJson(mergeOptions(current, sets));
+    return { ok: true, field: "options", before, after, changed: after !== before };
   }
 
   const current =
@@ -79,7 +208,11 @@ export async function previewApplyAction(
  *  - Demo dry-run (no Datadog call) when in DEMO_MODE, so the apply -> validated
  *    feedback flow is demonstrable locally.
  *  - Blocked otherwise.
- * Records an AppliedChange audit row (before/after/operator/target) either way.
+ * Records an AppliedChange audit row (before/after/operator/target) either way,
+ * with `dryRun` telling the two apart. The status stays `applied` for a dry run
+ * on purpose — the feedback loop keys off it — so the flag is the only thing
+ * separating "changed in Datadog" from "changed nowhere", and DEMO_MODE
+ * defaults to true.
  */
 export async function applyRecommendationAction(
   recommendationId: string,
@@ -105,11 +238,24 @@ export async function applyRecommendationAction(
     };
   }
 
-  const patch = JSON.parse(rec.patchJson) as ProposedPatch;
+  const patch = parseStoredPatch(rec.patchJson);
+  if (!patch) {
+    return { ok: false, message: "The stored change is malformed and was not applied." };
+  }
   const monitor = rec.monitor;
 
+  // Re-checked on the write path rather than trusted from the preview: the two
+  // are separate requests, and this is the last point before a credentialed PUT.
+  const state = patchState(patch, monitor);
+  if (state.kind === "already_applied") {
+    return { ok: false, noop: true, message: `No-op: ${state.message}` };
+  }
+  if (state.kind === "stale") {
+    return { ok: false, message: state.message };
+  }
+
   // Compute before/after + the Datadog PUT body.
-  let field: "message" | "query" | "priority" = patch.target;
+  let field: "message" | "query" | "priority" | "options" = patch.target;
   let before: string;
   let after: string;
   let putBody: Record<string, unknown>;
@@ -118,6 +264,35 @@ export async function applyRecommendationAction(
     before = monitor.priority;
     after = String(patch.priorityValue ?? "");
     putBody = { priority: patch.priorityValue };
+  } else if (patch.target === "options") {
+    const sets = patch.options ?? [];
+    if (sets.length === 0) {
+      return { ok: false, message: "No options defined for this change." };
+    }
+    if (!monitor.options) {
+      return {
+        ok: false,
+        message:
+          "Monitor options are not stored yet — run an analysis to read them from Datadog first.",
+      };
+    }
+    const current = parseOptions(monitor.options);
+    const merged = mergeOptions(current, sets);
+    before = stableOptionsJson(current);
+    after = stableOptionsJson(merged);
+    // Same drift guard as the text targets: if the live options already carry
+    // these values, the change has been applied or superseded.
+    if (after === before) {
+      return {
+        ok: false,
+        noop: true,
+        message:
+          "No-op: the monitor options already carry these values (already applied or drifted).",
+      };
+    }
+    // The whole merged object, never the changed key alone — Datadog replaces
+    // the options it is sent and defaults the rest.
+    putBody = { options: merged };
   } else {
     const branch = branchFor(patch, target);
     if (!branch) return { ok: false, message: "No change defined for this scope." };
@@ -176,18 +351,14 @@ export async function applyRecommendationAction(
       diffJson: JSON.stringify({ field, before, after }),
       operator: cfg.apply.operator,
       status,
+      dryRun: !real,
       datadogResponse,
     },
   });
 
   await prisma.monitor.update({
     where: { id: monitor.id },
-    data:
-      field === "query"
-        ? { query: after }
-        : field === "message"
-          ? { message: after }
-          : { priority: after },
+    data: monitorFieldUpdate(field, after),
   });
 
   await prisma.tuningRecommendation.update({
@@ -234,19 +405,30 @@ export async function revertAppliedChangeAction(
   if (real) {
     try {
       const dd = new DatadogClient(cfg);
-      const putBody =
-        beforeParsed.field === "query"
-          ? { query: beforeParsed.value }
-          : beforeParsed.field === "message"
-            ? { message: beforeParsed.value }
-            : { priority: Number(beforeParsed.value) };
+      const putBody = revertPutBody(beforeParsed.field, beforeParsed.value);
       const res = await dd.updateMonitor(change.monitor.id, putBody);
       datadogResponse = `Datadog reverted monitor ${res.id}`;
     } catch (err) {
-      return {
-        ok: false,
-        message: `Revert failed: ${err instanceof Error ? err.message : String(err)}`,
-      };
+      const message = err instanceof Error ? err.message : String(err);
+      // The apply path records a Failed row; this one used to return without
+      // one, so a revert that failed left no trace at all. An operator then
+      // cannot tell "nobody tried to revert" from "the revert was attempted
+      // and Datadog refused", which are different situations to walk into.
+      await prisma.appliedChange.create({
+        data: {
+          monitorId: change.monitor.id,
+          recommendationId: change.recommendationId,
+          targetScope: change.targetScope,
+          changeSummary: `Revert failed: ${change.changeSummary}`,
+          beforeJson: change.afterJson,
+          afterJson: change.beforeJson,
+          operator: cfg.apply.operator,
+          status: AppliedChangeStatus.Failed,
+          error: message,
+          revertsId: change.id,
+        },
+      });
+      return { ok: false, message: `Revert failed: ${message}` };
     }
   }
 
@@ -264,6 +446,7 @@ export async function revertAppliedChangeAction(
       afterJson: change.beforeJson,
       operator: cfg.apply.operator,
       status: AppliedChangeStatus.Reverted,
+      dryRun: !real,
       datadogResponse,
       revertsId: change.id,
     },
@@ -271,12 +454,7 @@ export async function revertAppliedChangeAction(
 
   await prisma.monitor.update({
     where: { id: change.monitor.id },
-    data:
-      beforeParsed.field === "query"
-        ? { query: beforeParsed.value }
-        : beforeParsed.field === "message"
-          ? { message: beforeParsed.value }
-          : { priority: beforeParsed.value },
+    data: monitorFieldUpdate(beforeParsed.field, beforeParsed.value),
   });
 
   if (change.recommendationId) {

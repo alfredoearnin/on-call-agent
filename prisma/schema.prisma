@@ -90,6 +90,13 @@ model Monitor {
   currentState String    @default("Unknown") // MonitorState
   query        String?
   message      String? // routing/notify text (redacted)
+  /// Datadog `options` as JSON, when a live read supplied them.
+  ///
+  /// Needed as the before-state for an options patch: Datadog's monitor PUT
+  /// replaces the options object, so a change to one key has to be merged into
+  /// the full current set rather than sent alone, or every unspecified option
+  /// reverts to its default.
+  options      String?
   configHash   String?
   datadogUrl   String?
   envScope     String?
@@ -261,6 +268,17 @@ model AppliedChange {
   diffJson         String?
   operator         String
   status           String    @default("applied") // AppliedChangeStatus
+  /// True when nothing was sent to Datadog — a demo dry-run.
+  ///
+  /// The status stays `applied` on purpose: DEMO_MODE exists so the
+  /// apply -> validated feedback loop can be demonstrated locally, and a
+  /// separate status would stop feedback.ts recognising these rows at all. The
+  /// hazard was that a dry run was then indistinguishable from a real write
+  /// except by reading the `datadogResponse` prose, while DEMO_MODE defaults to
+  /// true — so an install with Apply enabled but no write key recorded
+  /// "applied" for changes that never left the machine. This flag is the
+  /// difference, queryable rather than phrased.
+  dryRun           Boolean   @default(false)
   datadogResponse  String?
   error            String?
   appliedAt        DateTime  @default(now())
@@ -360,4 +378,61 @@ model MonitorEditNote {
   createdAt DateTime @default(now())
 
   @@index([monitorId, afterHash, createdAt])
+}
+
+/// One on-demand "Analyze this monitor" run: the evidence that was gathered, and
+/// what the interpretation made of it.
+///
+/// Separate from AutomationTrigger, which is fire-and-forget by construction. This
+/// one has states to observe, because the work happens in-process: evidence comes
+/// from the Datadog and incident.io clients, and only the interpretation of that
+/// evidence is delegated.
+///
+/// No FK to Monitor, following AutomationTrigger and MonitorEditNote: Prisma's
+/// SQLite provider rewrites a whole table when its FKs change, and prisma/oncall.db
+/// is committed, so a relation here would turn every migration into a large binary
+/// diff.
+///
+/// `evidenceJson` is kept on the row on purpose. It is what the recommendation was
+/// actually based on, so a reviewer can check the reasoning against the numbers
+/// instead of taking the summary on trust — and a prompt change can be re-run
+/// against the same bundle. It holds metric aggregates, alert metadata, and
+/// responder display names; never request bodies, customer identifiers, or emails.
+model MonitorAnalysis {
+  id        String @id @default(cuid())
+  monitorId String
+  status    String @default("queued") // AnalysisStatus
+  operator  String
+
+  /// Sanitized failure text. Never a URL, key, or response body.
+  error String?
+
+  /// The gathered evidence bundle (JSON), as sent for interpretation.
+  evidenceJson String?
+  /// One-line human summary of the finding, for the status line.
+  resultSummary String?
+  /// The recommendation this produced, when it produced one. Loose id, no FK.
+  recommendationId String?
+
+  /// Input tokens served from cache on the interpretation call. Zero across
+  /// repeated runs means a silent cache invalidator in the system prompt.
+  cacheReadTokens Int?
+
+  requestedAt DateTime  @default(now())
+  /// When a terminal state was actually observed. Null while in flight.
+  observedAt  DateTime?
+
+  /// When the cause-investigation agent was asked about this monitor, if it was.
+  ///
+  /// Recorded here rather than read from AutomationTrigger because that table
+  /// has no monitor id — it records that an automation was fired, not what it
+  /// was fired about. Without this the dashboard can say "an investigation was
+  /// requested" but never "of this monitor".
+  ///
+  /// Means "we asked", never "it worked": the agent's findings land in Jira and
+  /// Slack, and its run is observable only in Cursor.
+  investigationRequestedAt DateTime?
+
+  @@index([monitorId, requestedAt])
+  @@index([status])
 }

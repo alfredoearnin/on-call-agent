@@ -1,10 +1,17 @@
 import "server-only";
 import { DateTime } from "luxon";
 import { prisma } from "@/lib/db";
-import { getConfig, hasCloudAutomations } from "@/lib/config";
+import { getConfig, hasCloudAutomations, hasConfluence } from "@/lib/config";
+import { ConfluenceClient } from "@/lib/clients/confluence";
+import {
+  parseCausePage,
+  type CauseReport,
+} from "@/lib/analysis/cause-report";
 import { dayKey } from "@/lib/format";
+import { AUTOMATIONS } from "@/lib/automations/meta";
 import {
   AlertDisposition,
+  AppliedChangeStatus,
   AutomationKey,
   FiringKind,
   IncidentClass,
@@ -12,6 +19,14 @@ import {
   RunStatus,
   TriggerStatus,
 } from "@/lib/constants";
+import { isSettledRecommendation } from "@/lib/constants";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
+import {
+  DEFAULT_MONITOR_SORT,
+  sortMonitors,
+  type MonitorSort,
+} from "@/lib/monitor-sort";
 import { readGitEvidence } from "@/lib/automations/git-evidence";
 import { readPageArchive } from "@/lib/automations/page-evidence";
 import {
@@ -272,13 +287,9 @@ const STATUS_ORDER: Record<string, number> = {
  * nothing of the operator. `regressed` is excluded on purpose: that change did
  * land, but the noise came back, which is a fresh call to action.
  */
-export function isSettledRecommendation(status: string): boolean {
-  return (
-    status === RecommendationStatus.Applied ||
-    status === RecommendationStatus.Validated ||
-    status === RecommendationStatus.Resolved
-  );
-}
+// Re-exported for the callers that already import it from here; the predicate
+// itself now lives in constants.ts, outside `server-only`.
+export { isSettledRecommendation } from "@/lib/constants";
 
 export async function getRecommendations() {
   const recs = await prisma.tuningRecommendation.findMany({
@@ -497,8 +508,11 @@ export async function getWeekClose(
 export async function getLastAutomationTriggers(): Promise<
   Record<AutomationKey, { id: string; triggeredAt: Date; status: string } | null>
 > {
-  const [healthCheck, dashboardRefresh] = await Promise.all(
-    [AutomationKey.HealthCheck, AutomationKey.DashboardRefresh].map((key) =>
+  // Derived from AUTOMATIONS rather than listed, so adding an automation
+  // cannot leave a key silently missing from this record.
+  const keys = AUTOMATIONS.map((a) => a.key);
+  const rows = await Promise.all(
+    keys.map((key) =>
       prisma.automationTrigger.findFirst({
         where: { automationKey: key, status: TriggerStatus.Triggered },
         orderBy: { triggeredAt: "desc" },
@@ -506,10 +520,10 @@ export async function getLastAutomationTriggers(): Promise<
       }),
     ),
   );
-  return {
-    [AutomationKey.HealthCheck]: healthCheck,
-    [AutomationKey.DashboardRefresh]: dashboardRefresh,
-  };
+  return Object.fromEntries(keys.map((k, i) => [k, rows[i]])) as Record<
+    AutomationKey,
+    { id: string; triggeredAt: Date; status: string } | null
+  >;
 }
 
 /** Recent trigger attempts, for the Settings run log. */
@@ -518,4 +532,210 @@ export async function getAutomationTriggers(limit = 10) {
     orderBy: { triggeredAt: "desc" },
     take: limit,
   });
+}
+
+/**
+ * The most recent analysis of one monitor, for the Analyse button's status line.
+ *
+ * Newest regardless of status, because a failed or expired run is the thing an
+ * operator most needs to see — a list that showed only successes would imply
+ * nothing had been tried.
+ */
+export async function getLastMonitorAnalysis(monitorId: string) {
+  return prisma.monitorAnalysis.findFirst({
+    where: { monitorId },
+    orderBy: { requestedAt: "desc" },
+    select: {
+      id: true,
+      status: true,
+      requestedAt: true,
+      resultSummary: true,
+      error: true,
+      recommendationId: true,
+      investigationRequestedAt: true,
+    },
+  });
+}
+
+export interface MonitorListRow {
+  id: string;
+  name: string;
+  service: string | null;
+  priority: string;
+  currentState: string;
+  datadogUrl: string | null;
+  alertCount: number;
+  recommendationCount: number;
+  /**
+   * Recommendations applied through this dashboard, with an AppliedChange row
+   * behind them. The number the index was missing: a monitor with four
+   * recommendations reads very differently when three of them are done.
+   */
+  appliedCount: number;
+  /**
+   * Recommendations whose change was detected in the monitor's snapshot
+   * history instead — someone edited Datadog directly.
+   *
+   * Counted apart from `appliedCount` because the evidence is weaker and the
+   * difference is visible in practice: 135119948's recommendation was to swap
+   * `@webhook-incidentio-high` for `@webhook-incidentio-low`, and what actually
+   * happened was that the handles were split across `{{#is_alert}}` and
+   * `{{#is_warning}}` with low added to the warning branch. The recommendation
+   * was addressed, but not by the patch it carries, and a row claiming a plain
+   * "applied" would overstate what is known.
+   */
+  appliedOutOfBandCount: number;
+  /**
+   * Recommendations still awaiting a decision, and how many of those carry a
+   * patch that can be applied *right now*.
+   *
+   * `applyableCount` used to mean "has a patchJson", which is not the same
+   * question and read as a lie once a patch had been applied: monitor
+   * 243692163 showed "3 applyable" while all three patches were refused for
+   * describing a configuration the monitor no longer had. It is now the
+   * outcome of the same check the Apply button runs.
+   */
+  openCount: number;
+  applyableCount: number;
+  lastAnalysisAt: Date | null;
+  lastAnalysisStatus: string | null;
+}
+
+/**
+ * Every monitor, for the index that makes them reachable.
+ *
+ * Until this existed a monitor page could only be opened from a link on a
+ * recommendation, an alert or a config edit — so a monitor that had never been
+ * analysed, and therefore had none of those, had no route to it at all. That is
+ * exactly backwards: the monitors worth analysing first were the only ones you
+ * could not get to.
+ *
+ * Ordered by how much attention a monitor is asking for: firings first, then
+ * the ones with no recommendation yet, since those are the unexamined ones.
+ */
+export async function getMonitorList(
+  sort: MonitorSort = DEFAULT_MONITOR_SORT,
+): Promise<MonitorListRow[]> {
+  const [monitors, analyses] = await Promise.all([
+    prisma.monitor.findMany({
+      orderBy: [{ priority: "asc" }, { name: "asc" }],
+      include: {
+        _count: { select: { alerts: true } },
+        recommendations: {
+          select: {
+            patchJson: true,
+            status: true,
+            appliedChanges: { select: { status: true } },
+          },
+        },
+      },
+    }),
+    // One row per monitor: the newest analysis, whatever its outcome. Grouping
+    // in SQL would lose the status, so the newest-wins pass happens here.
+    prisma.monitorAnalysis.findMany({
+      orderBy: { requestedAt: "desc" },
+      select: { monitorId: true, requestedAt: true, status: true },
+    }),
+  ]);
+
+  const newest = new Map<string, { requestedAt: Date; status: string }>();
+  for (const a of analyses) {
+    if (!newest.has(a.monitorId)) {
+      newest.set(a.monitorId, { requestedAt: a.requestedAt, status: a.status });
+    }
+  }
+
+  const rows = monitors
+    .map((m) => {
+      const last = newest.get(m.id);
+      const open = m.recommendations.filter(
+        (r) => !isSettledRecommendation(r.status),
+      );
+      const inPlace = m.recommendations.filter(
+        (r) =>
+          r.status === RecommendationStatus.Applied ||
+          r.status === RecommendationStatus.Validated,
+      );
+      return {
+        id: m.id,
+        name: m.name,
+        service: m.service,
+        priority: m.priority,
+        currentState: m.currentState,
+        datadogUrl: m.datadogUrl,
+        alertCount: m._count.alerts,
+        recommendationCount: m.recommendations.length,
+        appliedCount: inPlace.filter((r) =>
+          r.appliedChanges.some(
+            (c) => c.status === AppliedChangeStatus.Applied,
+          ),
+        ).length,
+        appliedOutOfBandCount: inPlace.filter(
+          (r) =>
+            !r.appliedChanges.some(
+              (c) => c.status === AppliedChangeStatus.Applied,
+            ),
+        ).length,
+        openCount: open.length,
+        // Judged against the monitor's live config, not merely the presence of
+        // a patch column.
+        applyableCount: open.filter(
+          (r) => patchState(parseStoredPatch(r.patchJson), m).kind === "appliable",
+        ).length,
+        lastAnalysisAt: last?.requestedAt ?? null,
+        lastAnalysisStatus: last?.status ?? null,
+      };
+    });
+
+  return sortMonitors(rows, sort);
+}
+
+export interface MonitorCauseFindings {
+  /** Absolute URL of the Confluence page, when one was found. */
+  url?: string;
+  title?: string;
+  updatedAtIso?: string;
+  report?: CauseReport;
+  /** Why there is nothing to show. Distinguishes "no page" from "page unreadable". */
+  problem?: string;
+}
+
+/**
+ * The cause-investigation findings for one monitor, read from Confluence.
+ *
+ * Every failure mode returns a `problem` rather than an empty result, because
+ * "the agent has not written anything", "Atlassian is not configured" and "the
+ * page exists but the dashboard could not read it" call for different actions
+ * and must not collapse into a blank panel.
+ */
+export async function getMonitorCauseFindings(
+  monitorId: string,
+): Promise<MonitorCauseFindings> {
+  const cfg = getConfig();
+  if (!hasConfluence(cfg)) {
+    return {
+      problem:
+        "Atlassian credentials are not configured, so findings cannot be read (set JIRA_EMAIL and JIRA_API_TOKEN).",
+    };
+  }
+
+  try {
+    const page = await new ConfluenceClient(cfg).findMonitorCausePage(monitorId);
+    if (!page) {
+      return {
+        problem: "No findings page yet — the agent writes one when it finishes.",
+      };
+    }
+    const parsed = parseCausePage(page.body);
+    return {
+      url: page.url,
+      title: page.title,
+      updatedAtIso: page.updatedAtIso,
+      report: parsed.report,
+      problem: parsed.problem,
+    };
+  } catch {
+    // A Confluence outage must not take the monitor page down with it.
+    return { problem: "Confluence could not be reached." };
+  }
 }

@@ -229,6 +229,12 @@ export function getConfig(): AppConfig {
           "CURSOR_DASHBOARD_REFRESH_URL",
           "https://cursor.com/automations/ea0cbef2-8467-11f1-a7d1-d6b4613131ce",
         ),
+        // A console link, not a trigger: opening it shows the run history. The
+        // webhook URL and its key stay out of AppConfig, in secrets.ts.
+        [AutomationKey.CauseInvestigation]: str(
+          "CURSOR_CAUSE_INVESTIGATION_URL",
+          "https://cursor.com/t/earnin/automations/c26c73d9-b084-11f1-a3d8-362438fd9788",
+        ),
       },
     },
     cronSecret: str("CRON_SECRET", ""),

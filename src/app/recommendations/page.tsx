@@ -2,6 +2,8 @@ import { ChevronRight } from "lucide-react";
 import { getConfig, canApply } from "@/lib/config";
 import { getRecommendations, isSettledRecommendation } from "@/lib/queries";
 import { RecommendationCard } from "@/components/recommendation-card";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
 import { Badge } from "@/components/ui/badge";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +64,15 @@ export default async function RecommendationsPage() {
       ) : (
         <div className="space-y-4">
           {active.map((rec) => (
-            <RecommendationCard key={rec.id} rec={rec} applyMode={applyMode} />
+            <RecommendationCard
+              key={rec.id}
+              rec={rec}
+              applyMode={applyMode}
+              patchState={patchState(
+                parseStoredPatch(rec.patchJson),
+                rec.monitor ?? {},
+              )}
+            />
           ))}
         </div>
       )}
@@ -75,7 +85,15 @@ export default async function RecommendationsPage() {
           </summary>
           <div className="mt-4 space-y-4">
             {settled.map((rec) => (
-              <RecommendationCard key={rec.id} rec={rec} applyMode={applyMode} />
+              <RecommendationCard
+                key={rec.id}
+                rec={rec}
+                applyMode={applyMode}
+                patchState={patchState(
+                  parseStoredPatch(rec.patchJson),
+                  rec.monitor ?? {},
+                )}
+              />
             ))}
           </div>
         </details>

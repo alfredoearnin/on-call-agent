@@ -19,6 +19,7 @@ const links = [
   { href: "/daily", label: "Daily", icon: CalendarDays },
   { href: "/services", label: "Services", icon: Server },
   { href: "/carryover", label: "Carryover", icon: Flame },
+  { href: "/monitors", label: "Monitors", icon: Activity },
   { href: "/recommendations", label: "Recommendations", icon: Wrench },
   { href: "/edits", label: "Monitor edits", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },

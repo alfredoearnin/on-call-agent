@@ -3,6 +3,8 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ApplyControl } from "@/components/apply-control";
 import { statusTone, statusLabel, confidenceLabel } from "@/lib/format";
+import { isSettledRecommendation } from "@/lib/constants";
+import type { PatchState } from "@/lib/ingest/patch-state";
 
 type Mode = "real" | "demo" | "blocked";
 
@@ -30,9 +32,17 @@ interface RecLike {
 export function RecommendationCard({
   rec,
   applyMode,
+  patchState,
 }: {
   rec: RecLike;
   applyMode: Mode;
+  /**
+   * Whether this recommendation's stored patch still describes the monitor.
+   * Computed by the caller, which is the only place holding the live config.
+   * Omitted rather than defaulted, so a page that has not been taught to pass
+   * it keeps today's behaviour instead of silently claiming the patch is good.
+   */
+  patchState?: PatchState;
 }) {
   return (
     <Card id={rec.id} className="p-4 scroll-mt-20">
@@ -94,11 +104,28 @@ export function RecommendationCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
-        <ApplyControl
-          recommendationId={rec.id}
-          hasPatch={Boolean(rec.patchJson)}
-          mode={applyMode}
-        />
+        {/* Three reasons not to offer the button, and they are different
+            answers. Settled: the decision is made. Already applied or stale:
+            the row still says `recommend` or `regressed`, but its patch no
+            longer describes the monitor — and this is a safety fix, not tidying.
+            The earlier comment here claimed a second press could only no-op;
+            that was wrong. A patch whose replacement contains its own `find`
+            changes the text every time it is applied, so the drift guard
+            approved it and the monitor's routing got nested wrappers. */}
+        {isSettledRecommendation(rec.status) ? (
+          <span className="text-xs text-muted-foreground">
+            {statusLabel(rec.status)} — no further action.
+          </span>
+        ) : patchState?.kind === "already_applied" ||
+          patchState?.kind === "stale" ? (
+          <span className="text-xs text-warn">{patchState.message}</span>
+        ) : (
+          <ApplyControl
+            recommendationId={rec.id}
+            hasPatch={Boolean(rec.patchJson)}
+            mode={applyMode}
+          />
+        )}
         {rec.monitor?.datadogUrl && (
           <a
             href={rec.monitor.datadogUrl}

@@ -95,6 +95,54 @@ export class DatadogClient {
     return res.events ?? [];
   }
 
+  /**
+   * Alert events over a long range, fetched in chunks.
+   *
+   * The v1 events API will not accept a wide window — a 60-day range comes back
+   * as HTTP 400 — and it caps a response at 1000 events, which it does silently:
+   * a 30-day query for one team returns exactly 1000 and simply omits the rest.
+   * Either failure mode alone turns "this monitor fired eighteen times" into
+   * "this monitor never fired", so a caller wanting real history has to slice
+   * the range itself.
+   *
+   * Chunks are fetched a few at a time rather than all at once, to stay
+   * courteous to the API; a chunk that fails is skipped rather than failing the
+   * whole range, because partial history beats none.
+   */
+  async searchAlertEventsRange(
+    fromEpoch: number,
+    toEpoch: number,
+    chunkDays = 5,
+    concurrency = 4,
+  ): Promise<DatadogEvent[]> {
+    const chunkSeconds = chunkDays * 86_400;
+    const chunks: [number, number][] = [];
+    for (let start = fromEpoch; start < toEpoch; start += chunkSeconds) {
+      chunks.push([start, Math.min(start + chunkSeconds, toEpoch)]);
+    }
+
+    const out: DatadogEvent[] = [];
+    for (let i = 0; i < chunks.length; i += concurrency) {
+      const batch = chunks.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(([s, e]) =>
+          this.searchAlertEvents(s, e).catch(() => [] as DatadogEvent[]),
+        ),
+      );
+      for (const r of results) out.push(...r);
+    }
+
+    // Chunk boundaries are inclusive at both ends, so an event landing exactly
+    // on one appears twice.
+    const seen = new Set<string>();
+    return out.filter((e) => {
+      const key = e.id_str ?? String(e.id ?? `${e.date_happened}-${e.title}`);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   /** Query a metric timeseries for baseline grounding (p50/p90/max). */
   async queryMetric(
     query: string,
@@ -114,6 +162,45 @@ export class DatadogClient {
       }
     }
     return points;
+  }
+
+  /**
+   * Query a metric that groups (`... by {resource_name}`), keeping the series
+   * separate.
+   *
+   * `queryMetric` flattens every series into one array, which is right for a
+   * baseline but destroys the only signal that distinguishes a slow endpoint
+   * from a stalled process: whether the spike is confined to one resource or
+   * hit all of them at once. A health probe that normally answers in 0.5ms and
+   * suddenly takes 111s is not latency — it is the pod not running — and that
+   * is invisible once the series are averaged together.
+   *
+   * Keyed by Datadog's `scope` string (e.g. `resource_name:get_/control/ready`).
+   */
+  async queryMetricGrouped(
+    query: string,
+    fromEpoch: number,
+    toEpoch: number,
+  ): Promise<Map<string, MetricPoint[]>> {
+    const res = await httpRequest<{
+      series?: { scope?: string; pointlist?: [number, number][] }[];
+    }>(`${this.cfg.datadog.apiBase}/api/v1/query`, {
+      headers: readHeaders(this.cfg),
+      query: { from: fromEpoch, to: toEpoch, query },
+    });
+
+    const bySeries = new Map<string, MetricPoint[]>();
+    for (const s of res.series ?? []) {
+      const scope = s.scope ?? "*";
+      const points = bySeries.get(scope) ?? [];
+      for (const [at, v] of s.pointlist ?? []) {
+        if (typeof v === "number" && Number.isFinite(v)) {
+          points.push({ at, value: v });
+        }
+      }
+      bySeries.set(scope, points);
+    }
+    return bySeries;
   }
 
   /**
@@ -152,6 +239,17 @@ export class DatadogClient {
     );
     return parseMonitorAuditActors(res.data ?? []);
   }
+}
+
+/**
+ * One metric sample. The timestamp matters for the counterfactual: replaying a
+ * proposed rule over a past incident needs to know when each value landed, not
+ * just the distribution.
+ */
+export interface MetricPoint {
+  /** Epoch milliseconds, as Datadog returns it. */
+  at: number;
+  value: number;
 }
 
 /** Display name of a Datadog user who modified a monitor — never email. */

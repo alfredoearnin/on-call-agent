@@ -21,22 +21,69 @@ import { str } from "@/lib/config";
 export interface AutomationSecret {
   webhookUrl: string;
   apiKey: string;
+  /**
+   * How this automation wants the key presented, when it differs from the
+   * global CURSOR_WEBHOOK_AUTH_HEADER / _SCHEME.
+   *
+   * Cursor does not use one scheme for every webhook. The two chain
+   * automations authenticate with a bare `x-api-key`, and the
+   * cause-investigation one rejects that with HTTP 401 and wants
+   * `Authorization: Bearer`. A single global setting cannot express both, and
+   * changing it to suit one would silently break the others — so the override
+   * is per automation and the global values remain the default.
+   */
+  authHeader?: string;
+  authScheme?: string;
 }
 
-const ENV_KEYS: Record<AutomationKey, { url: string; key: string }> = {
+interface AutomationEnvNames {
+  url: string;
+  key: string;
+  /** Env var for a per-automation header override. */
+  header: string;
+  /** Env var for a per-automation scheme override. */
+  scheme: string;
+  /** Used when the override env vars are unset. Empty = use the global setting. */
+  defaultHeader?: string;
+  defaultScheme?: string;
+}
+
+const ENV_KEYS: Record<AutomationKey, AutomationEnvNames> = {
   [AutomationKey.HealthCheck]: {
     url: "CURSOR_HEALTH_CHECK_WEBHOOK_URL",
     key: "CURSOR_HEALTH_CHECK_API_KEY",
+    header: "CURSOR_HEALTH_CHECK_AUTH_HEADER",
+    scheme: "CURSOR_HEALTH_CHECK_AUTH_SCHEME",
   },
   [AutomationKey.DashboardRefresh]: {
     url: "CURSOR_DASHBOARD_REFRESH_WEBHOOK_URL",
     key: "CURSOR_DASHBOARD_REFRESH_API_KEY",
+    header: "CURSOR_DASHBOARD_REFRESH_AUTH_HEADER",
+    scheme: "CURSOR_DASHBOARD_REFRESH_AUTH_SCHEME",
+  },
+  [AutomationKey.CauseInvestigation]: {
+    url: "CURSOR_CAUSE_INVESTIGATION_WEBHOOK_URL",
+    key: "CURSOR_CAUSE_INVESTIGATION_API_KEY",
+    header: "CURSOR_CAUSE_INVESTIGATION_AUTH_HEADER",
+    scheme: "CURSOR_CAUSE_INVESTIGATION_AUTH_SCHEME",
+    // Observed, not guessed: this endpoint returned HTTP 401 to the global
+    // `x-api-key` and accepts `Authorization: Bearer`.
+    defaultHeader: "Authorization",
+    defaultScheme: "Bearer",
   },
 };
 
 export function automationSecret(key: AutomationKey): AutomationSecret {
   const names = ENV_KEYS[key];
-  return { webhookUrl: str(names.url, ""), apiKey: str(names.key, "") };
+  const authHeader = str(names.header, names.defaultHeader ?? "");
+  const authScheme = str(names.scheme, names.defaultScheme ?? "");
+  return {
+    webhookUrl: str(names.url, ""),
+    apiKey: str(names.key, ""),
+    // Empty means "no override" — the client then uses the global setting.
+    authHeader: authHeader || undefined,
+    authScheme: authScheme || undefined,
+  };
 }
 
 /**

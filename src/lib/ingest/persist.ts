@@ -4,6 +4,7 @@ import { redactDeep, redactString } from "@/lib/redact";
 import {
   FiringKind,
   RecommendationStatus,
+  isFeedbackStatus,
   type RecommendationStatus as RecStatus,
 } from "@/lib/constants";
 import type { IngestBundle } from "@/lib/ingest/types";
@@ -276,16 +277,11 @@ export async function persistBundle(
 
     const computed = computeStatus(weeksSeen, r.firesThisWeek, r.nightPages ?? 0);
     // Respect a curated/higher incoming status; never downgrade a feedback state.
-    const feedbackStates: string[] = [
-      RecommendationStatus.Applied,
-      RecommendationStatus.Validated,
-      RecommendationStatus.Regressed,
-    ];
     let status: string = computed;
     if ((STATUS_RANK[r.status] ?? 0) > (STATUS_RANK[computed] ?? 0)) {
       status = r.status;
     }
-    if (existing && feedbackStates.includes(existing.status)) {
+    if (existing && isFeedbackStatus(existing.status)) {
       status = existing.status;
     }
 

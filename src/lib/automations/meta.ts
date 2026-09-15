@@ -38,7 +38,28 @@ export const AUTOMATIONS: readonly AutomationMeta[] = [
     produces: "a Daily refresh commit on main",
     promptFile: "agents/OnCall dashboard.md",
   },
+  {
+    key: AutomationKey.CauseInvestigation,
+    // Step 0 because it is not in the daily chain at all: it runs on demand and
+    // its output never reaches this checkout, so the step-1-then-step-2 ordering
+    // and the settle-window warning between them do not apply to it.
+    step: 0,
+    label: "Monitor cause investigation",
+    produces: "Jira tickets and a Slack message",
+    promptFile: "agents/Monitor Cause Investigation.md",
+  },
 ] as const;
+
+/**
+ * The automations that form the daily chain, in the order they run.
+ *
+ * `step: 0` means "not in the chain". Health inference, the settle-window
+ * warning and the out-of-order check are all statements about step 1 followed
+ * by step 2; an on-demand automation whose output never lands in this checkout
+ * has nothing for them to observe, and including it would make them assert
+ * "unknown" about something that was never supposed to be knowable here.
+ */
+export const CHAIN_AUTOMATIONS = AUTOMATIONS.filter((a) => a.step > 0);
 
 export function automationMeta(key: AutomationKey): AutomationMeta {
   const found = AUTOMATIONS.find((a) => a.key === key);

@@ -1,13 +1,26 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getConfig, canApply } from "@/lib/config";
-import { getMonitorDetail, getSyncSettings } from "@/lib/queries";
+import { getConfig, canApply, hasDatadogRead } from "@/lib/config";
+import {
+  getLastMonitorAnalysis,
+  getMonitorCauseFindings,
+  getMonitorDetail,
+  getSyncSettings,
+  isSettledRecommendation,
+} from "@/lib/queries";
+import { ChevronRight } from "lucide-react";
+import { verdictLabel } from "@/lib/analysis/cause-report";
+import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
+import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
+import { AutomationKey } from "@/lib/constants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertCard } from "@/components/alert-card";
 import { RecommendationCard } from "@/components/recommendation-card";
 import { RevertButton } from "@/components/revert-button";
 import { getMonitorEdits } from "@/lib/monitor-edits";
+import { parseStoredPatch } from "@/lib/ingest/patch-schema";
+import { patchState } from "@/lib/ingest/patch-state";
 import { MonitorEditCard } from "@/components/monitor-edit-card";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 import { AppliedChangeStatus } from "@/lib/constants";
@@ -21,10 +34,15 @@ export default async function MonitorPage({
 }) {
   const { id } = await params;
   const cfg = getConfig();
-  const [monitor, settings, edits] = await Promise.all([
+  // A run the platform killed mid-request would otherwise sit in flight
+  // forever; this settles it to `expired` before the status line is rendered.
+  await reconcileStaleAnalyses();
+  const [monitor, settings, edits, lastAnalysis, findings] = await Promise.all([
     getMonitorDetail(id),
     getSyncSettings(),
     getMonitorEdits({ monitorId: id }),
+    getLastMonitorAnalysis(id),
+    getMonitorCauseFindings(id),
   ]);
   if (!monitor) notFound();
   const tz = settings?.timezone ?? cfg.team.timezone;
@@ -34,18 +52,59 @@ export default async function MonitorPage({
       ? "demo"
       : "blocked";
 
+  // Settled recommendations move to a collapsed list at the bottom, the same
+  // split the Recommendations page already makes. Interleaved, an applied change
+  // reads as outstanding work, and the list of things still to decide gets
+  // longer every time one of them is decided.
+  const activeRecommendations = monitor.recommendations.filter(
+    (r) => !isSettledRecommendation(r.status),
+  );
+  const settledRecommendations = monitor.recommendations.filter((r) =>
+    isSettledRecommendation(r.status),
+  );
+
+  // The analysis is rule-based, so the Datadog read credentials are the whole
+  // requirement — there is no model to configure and no third-party runner.
+  const missingAnalysisEnv = hasDatadogRead(cfg)
+    ? []
+    : ["DD_API_KEY", "DD_APP_KEY"];
+  const analyzeMode: "real" | "blocked" =
+    missingAnalysisEnv.length === 0 ? "real" : "blocked";
+
   return (
     <div className="space-y-6">
       <header>
         <Link href="/recommendations" className="text-xs text-primary hover:underline">
           ← Recommendations
         </Link>
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <h1 className="text-xl font-semibold">{monitor.name}</h1>
-          <Badge tone={monitorStateTone(monitor.currentState)}>
-            {monitor.currentState}
-          </Badge>
-          <Badge tone={priorityTone(monitor.priority)}>{monitor.priority}</Badge>
+        <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">{monitor.name}</h1>
+            <Badge tone={monitorStateTone(monitor.currentState)}>
+              {monitor.currentState}
+            </Badge>
+            <Badge tone={priorityTone(monitor.priority)}>{monitor.priority}</Badge>
+          </div>
+          {/* In the header rather than beside the Recommendations list: that
+              section only renders when a recommendation already exists, and the
+              "Current configuration" card only when a query is stored — so
+              either would hide this button on exactly the monitors worth
+              analysing first. */}
+          <AnalyzeMonitorButton
+            monitorId={monitor.id}
+            mode={analyzeMode}
+            missingEnv={missingAnalysisEnv}
+            last={
+              lastAnalysis
+                ? {
+                    status: lastAnalysis.status,
+                    requestedAtIso: lastAnalysis.requestedAt.toISOString(),
+                    summary: lastAnalysis.resultSummary,
+                    error: lastAnalysis.error,
+                  }
+                : null
+            }
+          />
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Monitor {monitor.id}
@@ -64,6 +123,102 @@ export default async function MonitorPage({
           </a>
         )}
       </header>
+
+      {(findings.report ||
+        findings.url ||
+        lastAnalysis?.investigationRequestedAt) && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Cause investigation</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {findings.report ? (
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    tone={
+                      findings.report.verdict === "real_defect"
+                        ? "alert"
+                        : findings.report.verdict === "noise_only"
+                          ? "ok"
+                          : "neutral"
+                    }
+                  >
+                    {verdictLabel(findings.report.verdict)}
+                  </Badge>
+                  {findings.updatedAtIso && (
+                    <span className="text-xs text-muted-foreground">
+                      {fmtDateTime(findings.updatedAtIso, tz)}
+                    </span>
+                  )}
+                  {/* The prompt must report whether the trigger delivered a
+                      monitor id. Surfaced because it is the difference between
+                      "this is about the monitor you clicked" and "the agent
+                      chose for itself". */}
+                  {findings.report.receivedMonitorId === false && (
+                    <Badge tone="warn" className="normal-case">
+                      agent selected this monitor itself
+                    </Badge>
+                  )}
+                </div>
+
+                <p>
+                  {findings.report.cause ??
+                    "Cause not determined from available signals."}
+                </p>
+
+                {findings.report.tickets.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Tickets: {findings.report.tickets.join(", ")}
+                  </p>
+                )}
+                {findings.report.evidence.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Evidence: {findings.report.evidence.join(" · ")}
+                  </p>
+                )}
+                {findings.report.limitations.length > 0 && (
+                  <p className="text-xs text-warn">
+                    The agent could not: {findings.report.limitations.join("; ")}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-muted-foreground">{findings.problem}</p>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              {lastAnalysis?.investigationRequestedAt && (
+                <>
+                  Requested{" "}
+                  {fmtDateTime(lastAnalysis.investigationRequestedAt, tz)}.{" "}
+                </>
+              )}
+              {findings.url && (
+                <>
+                  <a
+                    href={findings.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    Read the full page ↗
+                  </a>
+                  {" · "}
+                </>
+              )}
+              <a
+                href={`${cfg.automations.consoleUrl[AutomationKey.CauseInvestigation]}/runs`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-primary hover:underline"
+              >
+                Open the run in Cursor ↗
+              </a>
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {monitor.query && (
         <Card>
@@ -91,14 +246,15 @@ export default async function MonitorPage({
         </Card>
       )}
 
-      {monitor.recommendations.length > 0 && (
+      {activeRecommendations.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold">Recommendations</h2>
-          {monitor.recommendations.map((rec) => (
+          {activeRecommendations.map((rec) => (
             <RecommendationCard
               key={rec.id}
               rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
               applyMode={applyMode}
+              patchState={patchState(parseStoredPatch(rec.patchJson), monitor)}
             />
           ))}
         </section>
@@ -134,17 +290,28 @@ export default async function MonitorPage({
                 <div key={c.id} className="rounded-md border border-border p-3 text-xs">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">{c.changeSummary}</span>
-                    <Badge
-                      tone={
-                        c.status === AppliedChangeStatus.Applied
-                          ? "info"
-                          : c.status === AppliedChangeStatus.Reverted
-                            ? "neutral"
-                            : "alert"
-                      }
-                    >
-                      {c.status}
-                    </Badge>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {/* A dry run keeps the status `applied` — the feedback
+                          loop keys off it — so the flag is what separates
+                          "Datadog changed" from "nothing changed", and
+                          DEMO_MODE is on unless someone turns it off. */}
+                      {c.dryRun && (
+                        <Badge tone="alert" className="normal-case">
+                          dry run
+                        </Badge>
+                      )}
+                      <Badge
+                        tone={
+                          c.status === AppliedChangeStatus.Applied
+                            ? "info"
+                            : c.status === AppliedChangeStatus.Reverted
+                              ? "neutral"
+                              : "alert"
+                        }
+                      >
+                        {c.status}
+                      </Badge>
+                    </div>
                   </div>
                   <div className="mt-1 text-muted-foreground">
                     {c.targetScope} · {c.operator} · {fmtDateTime(c.appliedAt, tz)}
@@ -163,6 +330,25 @@ export default async function MonitorPage({
           </CardContent>
         </Card>
       </div>
+
+      {settledRecommendations.length > 0 && (
+        <details className="group">
+          <summary className="inline-flex w-fit cursor-pointer list-none items-center gap-1 rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-foreground/80 hover:bg-muted hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
+            Already applied ({settledRecommendations.length})
+          </summary>
+          <div className="mt-4 space-y-4">
+            {settledRecommendations.map((rec) => (
+              <RecommendationCard
+                key={rec.id}
+                rec={{ ...rec, monitor: { datadogUrl: monitor.datadogUrl } }}
+                applyMode={applyMode}
+                patchState={patchState(parseStoredPatch(rec.patchJson), monitor)}
+              />
+            ))}
+          </div>
+        </details>
+      )}
 
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">Config edits</h2>

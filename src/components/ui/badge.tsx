@@ -12,14 +12,22 @@ const toneClasses: Record<string, string> = {
 export function Badge({
   tone = "neutral",
   className,
+  title,
   children,
 }: {
   tone?: string;
   className?: string;
+  /**
+   * Hover text. A badge label has room for two or three words, so anything
+   * that needs a sentence — which of two things a count refers to, why a
+   * state is what it is — belongs here rather than in a longer label.
+   */
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
         toneClasses[tone] ?? toneClasses.neutral,

@@ -21,7 +21,7 @@ import {
   WeekCloseState,
   type AutomationHealthState as HealthState,
 } from "@/lib/constants";
-import { AUTOMATIONS, automationMeta } from "@/lib/automations/meta";
+import { AUTOMATIONS, CHAIN_AUTOMATIONS, automationMeta } from "@/lib/automations/meta";
 import type { GitCommit, GitEvidence } from "@/lib/automations/git-evidence";
 import type { ArchivedWeek, PageArchive } from "@/lib/automations/page-evidence";
 
@@ -138,11 +138,16 @@ export function assessAutomations(inputs: HealthInputs): AutomationHealth[] {
   });
 
   // Fixed order: step 1 before step 2, matching how the chain actually runs.
-  const byKey = new Map([
+  // Only the chain is inferable — see CHAIN_AUTOMATIONS. An automation outside
+  // it has no assessment here, and is dropped rather than asserted about: the
+  // non-null assertion this replaces would have manufactured one.
+  const byKey = new Map<AutomationKey, typeof healthCheck>([
     [AutomationKey.HealthCheck, healthCheck],
     [AutomationKey.DashboardRefresh, refresh],
   ]);
-  return AUTOMATIONS.map((meta) => byKey.get(meta.key)!);
+  return CHAIN_AUTOMATIONS.map((meta) => byKey.get(meta.key)).filter(
+    (a): a is NonNullable<typeof a> => a !== undefined,
+  );
 }
 
 interface Ctx {
