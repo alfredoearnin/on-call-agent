@@ -62,11 +62,21 @@ export function AnalyzeMonitorButton({
   missingEnv,
   last,
   alsoInvestigates = false,
+  emphasis = "primary",
 }: {
   monitorId: string;
   mode: AnalyzeMode;
   missingEnv: string[];
   last: LastAnalysis | null;
+  /**
+   * How loud the button should be.
+   *
+   * `quiet` on the monitor index, where every one of 279 rows carries this
+   * button: 279 filled buttons are not a hierarchy, and the thing worth the
+   * eye there is the handful of rows with a change ready to apply. On a
+   * monitor's own page the button is the page's action and stays filled.
+   */
+  emphasis?: "primary" | "quiet";
   /**
    * True when the Cursor cause-investigation automation is configured, so this
    * click also hands the monitor to the agent. Stated in the tooltip rather
@@ -99,7 +109,9 @@ export function AnalyzeMonitorButton({
     <div className="flex flex-col items-end gap-1">
       <Button
         size="sm"
-        variant={mode === "blocked" ? "secondary" : "primary"}
+        variant={
+          mode === "blocked" || emphasis === "quiet" ? "secondary" : "primary"
+        }
         onClick={onClick}
         disabled={mode === "blocked" || isPending}
         title={

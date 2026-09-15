@@ -1,48 +1,16 @@
 import Link from "next/link";
 import { getConfig, hasDatadogRead } from "@/lib/config";
-import {
-  getMonitorList,
-  getSyncSettings,
-  type MonitorListRow,
-} from "@/lib/queries";
+import { getMonitorList, getSyncSettings } from "@/lib/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AnalyzeMonitorButton } from "@/components/analyze-monitor-button";
 import { reconcileStaleAnalyses } from "@/lib/analysis-actions";
 import { AutomationKey } from "@/lib/constants";
 import { canTriggerAutomation } from "@/lib/automations/secrets";
+import { monitorProgressBadges } from "@/lib/monitor-progress";
 import { monitorStateTone, priorityTone, fmtDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
-
-/**
- * One row's recommendation tally, in three numbers that each mean one thing.
- *
- * The row used to read "4 recommendations (3 applyable)" for a monitor whose
- * three changes were already in Datadog — "applyable" meant "the row has a
- * patch column", and nothing on the index said that the work had been done.
- * Whether the advice was taken is the question this list is for, so it is the
- * clause that comes first.
- *
- * Clauses are omitted when their count is zero rather than printed as a zero,
- * except "none applyable", which is the interesting case: advice is open and
- * nothing can act on it.
- */
-function recommendationSummary(m: MonitorListRow): string {
-  const parts = [
-    `${m.recommendationCount} recommendation${m.recommendationCount === 1 ? "" : "s"}`,
-  ];
-  if (m.appliedCount > 0) parts.push(`${m.appliedCount} applied`);
-  if (m.appliedOutOfBandCount > 0) {
-    parts.push(`${m.appliedOutOfBandCount} applied out of band`);
-  }
-  if (m.openCount > 0) {
-    parts.push(
-      m.applyableCount > 0 ? `${m.applyableCount} applyable` : "none applyable",
-    );
-  }
-  return parts.join(" · ");
-}
 
 /**
  * The monitor index.
@@ -124,42 +92,61 @@ export default async function MonitorsPage() {
                 className="flex flex-wrap items-start justify-between gap-3 p-4"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Link
-                      href={`/monitors/${m.id}`}
-                      className="truncate text-sm font-medium text-primary hover:underline"
-                    >
-                      {m.name}
-                    </Link>
+                  {/* The title owns its line. It used to share it with the
+                      state and priority badges, which at a narrow width cost
+                      the worst of both: the name truncated mid-word *and* the
+                      badges wrapped anyway, giving three-line rows of varying
+                      height. The name is the identifier — it wraps rather than
+                      being cut. */}
+                  <Link
+                    href={`/monitors/${m.id}`}
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    {m.name}
+                  </Link>
+                  {/* State and priority belong with the identity line: they
+                      classify the monitor, where the badges on the right track
+                      the work on it. Kept as badges rather than folded into the
+                      text so an Alert or a No Data still carries its colour. */}
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                     <Badge tone={monitorStateTone(m.currentState)}>
                       {m.currentState}
                     </Badge>
                     <Badge tone={priorityTone(m.priority)}>{m.priority}</Badge>
+                    <span>
+                      {m.id}
+                      {m.service ? ` · ${m.service}` : ""}
+                      {` · ${m.alertCount} firing${m.alertCount === 1 ? "" : "s"}`}
+                      {m.lastAnalysisAt
+                        ? ` · analysed ${fmtDateTime(m.lastAnalysisAt, tz)}${
+                            m.lastAnalysisStatus &&
+                            m.lastAnalysisStatus !== "done"
+                              ? ` (${m.lastAnalysisStatus})`
+                              : ""
+                          }${
+                            m.recommendationCount === 0
+                              ? " — nothing mechanical found"
+                              : ""
+                          }`
+                        : ""}
+                    </span>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {m.id}
-                    {m.service ? ` · ${m.service}` : ""}
-                    {` · ${m.alertCount} recorded firing${m.alertCount === 1 ? "" : "s"}`}
-                    {m.recommendationCount > 0
-                      ? ` · ${recommendationSummary(m)}`
-                      : " · no recommendation yet"}
-                    {m.lastAnalysisAt
-                      ? ` · analysed ${fmtDateTime(m.lastAnalysisAt, tz)}${
-                          m.lastAnalysisStatus &&
-                          m.lastAnalysisStatus !== "done"
-                            ? ` (${m.lastAnalysisStatus})`
-                            : ""
-                        }`
-                      : ""}
-                  </p>
                 </div>
-                <AnalyzeMonitorButton
-                  monitorId={m.id}
-                  mode={analyzeMode}
-                  missingEnv={missingAnalysisEnv}
-                  last={null}
-                  alsoInvestigates={investigateConfigured}
-                />
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                  {monitorProgressBadges(m).map((b) => (
+                    <Badge key={b.label} tone={b.tone} title={b.title} className="normal-case">
+                      {b.label}
+                    </Badge>
+                  ))}
+                  <AnalyzeMonitorButton
+                    monitorId={m.id}
+                    mode={analyzeMode}
+                    missingEnv={missingAnalysisEnv}
+                    last={null}
+                    alsoInvestigates={investigateConfigured}
+                    emphasis="quiet"
+                  />
+                </div>
               </div>
             ))}
           </CardContent>
