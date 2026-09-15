@@ -75,6 +75,7 @@ export default async function SettingsPage() {
           mode: canTriggerAutomation(meta.key) ? "real" : "blocked",
           missingEnv: automationEnvNames(meta.key),
           health: health.find((h) => h.key === meta.key),
+          triggerFrom: meta.triggerFrom,
           lastTriggeredAt: lastTriggers[meta.key]?.triggeredAt ?? null,
           warning:
             meta.key === AutomationKey.DashboardRefresh
