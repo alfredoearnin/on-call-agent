@@ -615,6 +615,31 @@ describe("parseCoverage", () => {
     }
   });
 
+  // From 2026-09-15 the page began stamping the header — `Coverage check (Slack
+  // out-of-office, as of …):` — and the failure sentence stopped being read as a
+  // failure: COVERAGE_HEADER allowed the parenthetical, COVERAGE_FAILED did not,
+  // so a check that could not run was recorded as a check that ran with no role
+  // bullets. That downgrades the banner from "verify manually, here's why" to the
+  // quiet "page carried no check", losing the stated reason — the exact inversion
+  // the tone split in on-call-banner exists to prevent. The two cases above cover
+  // the stamp and the failure separately; only together do they regress.
+  it("reports the failure reason when a stamped check could not be completed", () => {
+    const coverage = parseCoverage(
+      "_Coverage check (Slack out-of-office, as of 2026-09-29 10:25 AM PT): " +
+        "could not be completed (no Slack profile-read tool available under " +
+        "either name) — verify availability manually._",
+      TZ,
+    );
+
+    assert.equal(
+      coverage?.unavailableReason,
+      "no Slack profile-read tool available under either name",
+    );
+    for (const role of Object.values(CoverageRole)) {
+      assert.equal(coverage?.roles[role].state, Coverage.Unknown, role);
+    }
+  });
+
   it("returns undefined when the page carries no coverage check", () => {
     assert.equal(
       parseCoverage("# Growth Team Ops Review — Weekly Handoff", TZ),
