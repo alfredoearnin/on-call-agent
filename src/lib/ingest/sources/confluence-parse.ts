@@ -671,6 +671,19 @@ const VERIFIED_AS_OF = /last verified\s*(?:\(([^)]+)\)|:\s*([^.;,]+))/i;
 
 const flatten = (s: string) => s.replace(/\s+/g, " ");
 
+/**
+ * Collapse an over-long emphasis run to the two asterisks the patterns expect.
+ *
+ * The page has shipped names as `****Alfred****`, and `BOLD_NAME` must sit
+ * immediately after the role label: `LABEL` cannot absorb asterisks, so `\*\*`
+ * eats two of the four and the `[\p{L}]` that follows lands on a third — no
+ * match, no names, and the Overview falls back to a dash. Normalising here
+ * rather than widening `BOLD_NAME` to `\*{2,4}` tolerates any run length the
+ * page invents next, and shortens adversarial asterisk runs instead of giving
+ * the engine more ways to split them.
+ */
+const normalizeEmphasis = (s: string) => s.replace(/\*{3,}/g, "**");
+
 type Role = "primary" | "secondary";
 
 /** Every `role → name` pairing in one sentence, in the order they appear. */
@@ -700,7 +713,9 @@ export function parseOnCall(md: string): NormalizedSchedule | undefined {
   /** The paragraph naming the current rotation, for the verified/carried check. */
   let context: string | undefined;
 
-  const paragraphs = md.split(/\n\s*\n/).map(flatten);
+  const paragraphs = md
+    .split(/\n\s*\n/)
+    .map((p) => normalizeEmphasis(flatten(p)));
   const declared = paragraphs.filter((p) => ROTATION_PARAGRAPH.test(p));
 
   for (const flat of declared.length ? declared : paragraphs) {

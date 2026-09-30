@@ -229,6 +229,24 @@ describe("parseOnCall", () => {
     assert.equal(schedule?.secondary, "grace.hopper");
   });
 
+  // The page alternated between `**X**` and `****X****` daily through late
+  // September 2026 and the doubled form parsed to nothing, so the Overview showed
+  // a dash every other day. The archive scan below catches this too, but only on
+  // the days the live page happens to be written the doubled way — this pins the
+  // form itself so a fix cannot regress silently between refreshes.
+  it("reads a rotation line whose names carry doubled emphasis markers", () => {
+    const schedule = parseOnCall(
+      "*This on-call week — primary: ****Ada Lovelace****; secondary: ****grace.hopper**** " +
+        "(shift 2026-09-29 → 2026-10-06; verified live via *`schedule_show`*). " +
+        "Next handoff 2026-10-06: primary ****grace.hopper****, secondary ****Alan Turing****.*",
+    );
+
+    assert.equal(schedule?.primary, "Ada Lovelace");
+    assert.equal(schedule?.secondary, "grace.hopper");
+    assert.equal(schedule?.nextPrimary, "grace.hopper");
+    assert.equal(schedule?.nextSecondary, "Alan Turing");
+  });
+
   it("separates the closing week from the incoming one in a single paragraph", () => {
     const schedule = parseOnCall(
       "On-call (closing week): Primary **Ada Lovelace** — confirmed from incident.io " +
