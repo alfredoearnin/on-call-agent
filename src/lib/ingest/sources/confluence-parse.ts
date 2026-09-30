@@ -505,9 +505,24 @@ export function parseRefreshedAt(
  * regexes: an unbounded `\s*` next to a capture lets the engine split a whitespace
  * run exponentially many ways and hang the ingest.
  */
-const COVERAGE_FAILED =
-  /coverage\s{1,4}check\s{0,4}:\s{0,4}could\s{1,4}not\s{1,4}be\s{1,4}completed(?:\s{0,4}\(([^)]{0,80})\))?/i;
-const COVERAGE_HEADER = /coverage\s{1,4}check(?:\s{0,4}\(([^)]{0,80})\))?\s{0,4}:/i;
+/**
+ * `Coverage check:`, with the optional `(as of …)` stamp the page may insert.
+ *
+ * Shared deliberately: the failure sentence opens with this same header, so both
+ * patterns below must accept it identically. When only the header tolerated the
+ * stamp, a stamped failure fell through the failure check, matched the header,
+ * and was recorded as a check that ran with no role bullets — reading as "no
+ * check on the page" rather than "the check could not run, and here is why".
+ *
+ * Captures the stamp, so the reason is group 2 of `COVERAGE_FAILED`.
+ */
+const COVERAGE_PREFIX = String.raw`coverage\s{1,4}check(?:\s{0,4}\(([^)]{0,80})\))?\s{0,4}:`;
+
+const COVERAGE_FAILED = new RegExp(
+  String.raw`${COVERAGE_PREFIX}\s{0,4}could\s{1,4}not\s{1,4}be\s{1,4}completed(?:\s{0,4}\(([^)]{0,80})\))?`,
+  "i",
+);
+const COVERAGE_HEADER = new RegExp(COVERAGE_PREFIX, "i");
 /** A bullet naming one rotation slot. `next primary` must precede `primary`. */
 const COVERAGE_ROLE =
   /^[*\-•\s]{1,6}(next\s{1,4}primary|next\s{1,4}secondary|primary|secondary)\b(.{0,160})$/i;
@@ -556,7 +571,7 @@ export function parseCoverage(
     const failed = COVERAGE_FAILED.exec(line);
     if (failed) {
       return {
-        unavailableReason: clean(failed[1] ?? "") || "reason not stated",
+        unavailableReason: clean(failed[2] ?? "") || "reason not stated",
         roles: unknownRoles(),
       };
     }
@@ -671,6 +686,19 @@ const VERIFIED_AS_OF = /last verified\s*(?:\(([^)]+)\)|:\s*([^.;,]+))/i;
 
 const flatten = (s: string) => s.replace(/\s+/g, " ");
 
+/**
+ * Collapse an over-long emphasis run to the two asterisks the patterns expect.
+ *
+ * The page has shipped names as `****Alfred****`, and `BOLD_NAME` must sit
+ * immediately after the role label: `LABEL` cannot absorb asterisks, so `\*\*`
+ * eats two of the four and the `[\p{L}]` that follows lands on a third — no
+ * match, no names, and the Overview falls back to a dash. Normalising here
+ * rather than widening `BOLD_NAME` to `\*{2,4}` tolerates any run length the
+ * page invents next, and shortens adversarial asterisk runs instead of giving
+ * the engine more ways to split them.
+ */
+const normalizeEmphasis = (s: string) => s.replace(/\*{3,}/g, "**");
+
 type Role = "primary" | "secondary";
 
 /** Every `role → name` pairing in one sentence, in the order they appear. */
@@ -700,7 +728,9 @@ export function parseOnCall(md: string): NormalizedSchedule | undefined {
   /** The paragraph naming the current rotation, for the verified/carried check. */
   let context: string | undefined;
 
-  const paragraphs = md.split(/\n\s*\n/).map(flatten);
+  const paragraphs = md
+    .split(/\n\s*\n/)
+    .map((p) => normalizeEmphasis(flatten(p)));
   const declared = paragraphs.filter((p) => ROTATION_PARAGRAPH.test(p));
 
   for (const flat of declared.length ? declared : paragraphs) {

@@ -229,6 +229,24 @@ describe("parseOnCall", () => {
     assert.equal(schedule?.secondary, "grace.hopper");
   });
 
+  // The page alternated between `**X**` and `****X****` daily through late
+  // September 2026 and the doubled form parsed to nothing, so the Overview showed
+  // a dash every other day. The archive scan below catches this too, but only on
+  // the days the live page happens to be written the doubled way — this pins the
+  // form itself so a fix cannot regress silently between refreshes.
+  it("reads a rotation line whose names carry doubled emphasis markers", () => {
+    const schedule = parseOnCall(
+      "*This on-call week — primary: ****Ada Lovelace****; secondary: ****grace.hopper**** " +
+        "(shift 2026-09-29 → 2026-10-06; verified live via *`schedule_show`*). " +
+        "Next handoff 2026-10-06: primary ****grace.hopper****, secondary ****Alan Turing****.*",
+    );
+
+    assert.equal(schedule?.primary, "Ada Lovelace");
+    assert.equal(schedule?.secondary, "grace.hopper");
+    assert.equal(schedule?.nextPrimary, "grace.hopper");
+    assert.equal(schedule?.nextSecondary, "Alan Turing");
+  });
+
   it("separates the closing week from the incoming one in a single paragraph", () => {
     const schedule = parseOnCall(
       "On-call (closing week): Primary **Ada Lovelace** — confirmed from incident.io " +
@@ -592,6 +610,31 @@ describe("parseCoverage", () => {
     );
 
     assert.equal(coverage?.unavailableReason, "Slack unreachable");
+    for (const role of Object.values(CoverageRole)) {
+      assert.equal(coverage?.roles[role].state, Coverage.Unknown, role);
+    }
+  });
+
+  // From 2026-09-15 the page began stamping the header — `Coverage check (Slack
+  // out-of-office, as of …):` — and the failure sentence stopped being read as a
+  // failure: COVERAGE_HEADER allowed the parenthetical, COVERAGE_FAILED did not,
+  // so a check that could not run was recorded as a check that ran with no role
+  // bullets. That downgrades the banner from "verify manually, here's why" to the
+  // quiet "page carried no check", losing the stated reason — the exact inversion
+  // the tone split in on-call-banner exists to prevent. The two cases above cover
+  // the stamp and the failure separately; only together do they regress.
+  it("reports the failure reason when a stamped check could not be completed", () => {
+    const coverage = parseCoverage(
+      "_Coverage check (Slack out-of-office, as of 2026-09-29 10:25 AM PT): " +
+        "could not be completed (no Slack profile-read tool available under " +
+        "either name) — verify availability manually._",
+      TZ,
+    );
+
+    assert.equal(
+      coverage?.unavailableReason,
+      "no Slack profile-read tool available under either name",
+    );
     for (const role of Object.values(CoverageRole)) {
       assert.equal(coverage?.roles[role].state, Coverage.Unknown, role);
     }
