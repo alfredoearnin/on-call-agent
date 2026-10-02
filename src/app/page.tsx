@@ -22,6 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { KpiCard } from "@/components/kpi-card";
 import { TrendChart } from "@/components/trend-chart";
 import { OnCallBanner } from "@/components/on-call-banner";
+import { AttentionPanel } from "@/components/attention-panel";
+import { collectSignals } from "@/lib/overview-signals";
 import {
   assessCoverage,
   deserializeCoverage,
@@ -78,6 +80,15 @@ export default async function OverviewPage() {
     (s) => decisions[s.name],
   ).length;
 
+  const signals = collectSignals({
+    activeFiring: run.activeFiring,
+    staleFiring: run.staleFiring,
+    incidents: run.incidentsCount,
+    openRecommendations: openRecs.length,
+    servicesToDrop: undecidedDrops,
+    boundaryDisputes: undecidedDisputes,
+  });
+
   return (
     <div className="space-y-6">
       <header>
@@ -103,47 +114,55 @@ export default async function OverviewPage() {
         now={now}
       />
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard
-          label="Alerts (week-to-date)"
-          value={run.totalAlerts}
-          sub={`${run.highAlerts} High / ${run.lowAlerts} Low · run-rate ~${Math.round(
-            run.runRateWeekly ?? 0,
-          )}/wk ${trendArrow(run.trend)}`}
-        />
-        <KpiCard
-          label="Active firing"
-          value={run.activeFiring}
-          tone={run.activeFiring > 0 ? "alert" : "ok"}
-          sub="prod Alert/Warn now"
-        />
-        <KpiCard
-          label="Stale firing"
-          value={run.staleFiring}
-          tone={run.staleFiring > 0 ? "warn" : "ok"}
-          sub="orphaned incident.io alerts"
-        />
-        <KpiCard
-          label="Escalation rate"
-          value={`${run.escalationRateNum}/${run.escalationRateDen || 0}`}
-          sub="alerts → incidents"
-        />
-        <KpiCard label="Human attention" value={run.humanAttention} />
-        <KpiCard label="Auto-resolved" value={run.autoResolved} />
-        <KpiCard label="Incidents" value={run.incidentsCount} tone={run.incidentsCount > 0 ? "alert" : "ok"} />
-        <KpiCard
-          label="Open recommendations"
-          value={openRecs.length}
-          tone={openRecs.length > 0 ? "warn" : "ok"}
-        />
-        <KpiCard
-          label="Monitor edits this week"
-          value={editsThisWeek}
-          tone={editsThisWeek > 0 ? "info" : "ok"}
-          href="/edits"
-          sub="Datadog Saves + dashboard apply"
-        />
-      </div>
+      <AttentionPanel signals={signals} />
+
+      {/*
+        Reference, not triage. Every count the page used to shout is still here,
+        but tonally quiet: `AttentionPanel` above names what is owed, and a second
+        set of coloured cards saying the same thing would only make the reader
+        compare the two. The four that frame the week stay full size; the rest are
+        supporting detail.
+      */}
+      <section aria-label="Week metrics" className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard
+            label="Alerts (week-to-date)"
+            value={run.totalAlerts}
+            sub={`${run.highAlerts} High / ${run.lowAlerts} Low · run-rate ~${Math.round(
+              run.runRateWeekly ?? 0,
+            )}/wk ${trendArrow(run.trend)}`}
+          />
+          <KpiCard
+            label="Active firing"
+            value={run.activeFiring}
+            sub="prod Alert/Warn now"
+          />
+          <KpiCard
+            label="Stale firing"
+            value={run.staleFiring}
+            sub="orphaned incident.io alerts"
+          />
+          <KpiCard
+            label="Escalation rate"
+            value={`${run.escalationRateNum}/${run.escalationRateDen || 0}`}
+            sub="alerts → incidents"
+          />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <KpiCard dense label="Human attention" value={run.humanAttention} />
+          <KpiCard dense label="Auto-resolved" value={run.autoResolved} />
+          <KpiCard dense label="Incidents" value={run.incidentsCount} />
+          <KpiCard dense label="Open recs" value={openRecs.length} />
+          <KpiCard
+            dense
+            label="Monitor edits"
+            value={editsThisWeek}
+            href="/edits"
+            sub="Datadog + dashboard"
+          />
+        </div>
+      </section>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">

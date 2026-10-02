@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!--
+    The sidebar mark, at tab size: lucide's `Activity` pulse on a rounded
+    primary-blue badge (see SidebarNav).
+
+    Colours are hardcoded rather than read from the theme tokens in globals.css.
+    A favicon renders outside the document, so the primary custom property
+    resolves to nothing there and the icon would come out unpainted. The badge
+    is filled instead of transparent so the white stroke keeps its contrast
+    against a light and a dark browser tab alike, which a bare glyph would not.
+
+    Stroke is heavier than lucide's default 2: at a 16px tab the default reads
+    as a hairline.
+
+    Keep this comment free of a doubled hyphen. An SVG loaded as an image is
+    parsed as strict XML, where a doubled hyphen inside a comment is illegal and
+    silently yields a broken image; the build and a plain curl both still pass.
+  -->
+  <rect width="32" height="32" rx="7" fill="#2f6fed" />
+  <path
+    d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"
+    transform="translate(4 4)"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="2.75"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>
